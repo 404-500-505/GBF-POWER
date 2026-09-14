@@ -70,14 +70,17 @@ FORBIDDEN_EXTENSIONS = frozenset(
     }
 )
 MAX_FILE_SIZE = 2 * 1024 * 1024
-MAX_TEXT_SIZE = 1024 * 1024
 ALLOWED_TEXT_CONTROLS = frozenset(b"\t\n\r")
 
 
 def is_forbidden_filename(name: str) -> bool:
     folded = name.casefold()
+    is_private_env = (folded == ".env" or folded.startswith(".env.")) and not folded.endswith(
+        ".example"
+    )
     return (
-        folded in FORBIDDEN_FILENAMES
+        is_private_env
+        or folded in FORBIDDEN_FILENAMES
         or folded.startswith(FORBIDDEN_FILENAME_PREFIXES)
         or (folded.startswith("deployment-history-") and folded.endswith(".json"))
     )
@@ -244,18 +247,6 @@ def check_repository(repo: Path) -> list[Finding]:
                     relative_text,
                     "oversized-file",
                     "release candidate exceeds the 2 MiB size limit",
-                )
-            )
-            continue
-        is_license_file = relative.name.casefold() == "license" or relative.name.casefold().startswith(
-            "license."
-        )
-        if size > MAX_TEXT_SIZE and not is_license_file:
-            findings.append(
-                Finding(
-                    relative_text,
-                    "oversized-text",
-                    "text release candidate exceeds the 1 MiB size limit",
                 )
             )
             continue

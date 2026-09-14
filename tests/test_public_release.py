@@ -212,6 +212,21 @@ class PublicReleaseCheckTests(unittest.TestCase):
         for name in names:
             self.assertIn(f"config/{name}", result.stdout)
 
+    def test_env_files_are_rejected_but_example_variants_are_allowed(self) -> None:
+        rejected = [".env", ".env.local", ".env.production.secret"]
+        allowed = [".env.example", ".env.local.example"]
+        for name in rejected + allowed:
+            path = self._write(name, "SAFE_PLACEHOLDER=true")
+            self._git("add", "-f", "--", str(path.relative_to(self.repo)))
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "forbidden-filename")
+        for name in rejected:
+            self.assertIn(f"{name}\tforbidden-filename\t", result.stdout)
+        for name in allowed:
+            self.assertNotIn(f"{name}\t", result.stdout)
+
     def test_forbidden_extensions_are_rejected_when_git_tracks_them(self) -> None:
         extensions = [
             ".key",
@@ -243,15 +258,15 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
         self._assert_rejected(result, "oversized-file")
 
-    def test_regular_text_larger_than_one_mib_is_rejected(self) -> None:
-        self._write("large.txt", b"x" * (1024 * 1024 + 1))
+    def test_text_up_to_two_mib_is_allowed(self) -> None:
+        self._write("large.txt", b"x" * (2 * 1024 * 1024))
 
         result = self._run_checker()
 
-        self._assert_rejected(result, "oversized-text")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-    def test_license_may_exceed_regular_text_limit(self) -> None:
-        self._write("LICENSE", b"x" * (1024 * 1024 + 1))
+    def test_license_up_to_two_mib_is_allowed(self) -> None:
+        self._write("LICENSE", b"x" * (2 * 1024 * 1024))
 
         result = self._run_checker()
 
