@@ -34,3 +34,9 @@ gbf-activation check-gateway-config --config gateway.json
 ```
 
 校验只解析结构，不绑定端口、不创建状态，也不证明引用的证书、密钥或网络端点可用。
+
+## Windows 素材缓存
+
+启用本地素材缓存后，新产生的数字版本资源保存在当前用户配置目录下的 `runtime/asset-cache/gbf/https/assets/<版本>/`。文件采用 ACGP 兼容的“原响应字节 + `.ext` 元数据”布局；数字版本目录视为不可变命名空间并长期复用。服务端明确返回 `no-cache`、`no-store`、`private`，携带 Cookie/授权信息，包含查询参数，或不属于素材 CDN 白名单的响应不会进入长期缓存。
+
+旧 ACGP 的安装位置因用户而异，不应写死盘符。客户端停止时可从菜单选择“旧 ACGP 缓存”，并可选择 ACGP 程序根目录或 `cache`、`gbf`、`https`、`assets` 任一目录层级；程序会归一化后把该用户的路径保存到 `cache.legacy_directory`。数字版本旧素材通过校验和及内容类型检查后可直接命中，非版本旧素材仍须向源站验证。

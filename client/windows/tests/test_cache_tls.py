@@ -226,6 +226,21 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests),1)
         self.assertEqual(self.gateway.stats['legacy_hits'],1)
 
+    async def test_versioned_acgp_legacy_file_is_served_without_origin_request(self):
+        import hashlib,json
+        path='/assets/1789040290/img/sp/from-acgp.png'
+        legacy=self.path/'legacy/https/assets/1789040290/img/sp/from-acgp.png'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'ACGP-VERSIONED')
+        Path(str(legacy)+'.ext').write_text(json.dumps({'ct':'image/png','ce':None,
+            'md5':hashlib.md5(b'ACGP-VERSIONED').hexdigest(),'ETag':'"old"','v':1}))
+        self.cache.legacy_dir=self.path/'legacy'
+        response=await self.get(path)
+        self.assertTrue(response.endswith(b'ACGP-VERSIONED'))
+        self.assertIn(b'x-gbf-cache: acgp-hit',response.lower())
+        self.assertEqual(self.requests,[])
+        self.assertEqual(self.gateway.stats['hits'],1)
+
     async def test_disconnected_origin_never_serves_stale(self):
         await self.get()
         self.origin.close()

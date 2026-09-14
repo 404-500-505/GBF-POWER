@@ -26,7 +26,8 @@ from tkinter import filedialog,messagebox,ttk
 
 from client_model import OperationGate,display_stats,number,Rates,PingWindow
 from client_runtime import (Manager,initialize,load,save,cert_status,set_cache,renew_certificate,
-                            generate_key,uninstall_trust,acceleration_ready,BASE)
+                            generate_key,uninstall_trust,acceleration_ready,
+                            normalize_acgp_cache_directory,BASE)
 from monitor import ping_node,probe_gbf
 from activation_client import (activate,registration,check_device,ActivationError,
                                set_line_preference,line_preference,set_node_quality,LINE_LABELS)
@@ -336,6 +337,7 @@ class App:
         if self.admin:
             m.add_command(label='生成本机 SSH 密钥',command=self.key_clicked)
             m.add_command(label='复制本机 SSH 公钥',command=self.copy_key)
+        m.add_command(label='选择旧 ACGP 缓存…',command=self.choose_acgp_cache)
         m.add_command(label='更新证书…',command=self.renew_clicked)
         m.add_command(label='打开数据目录',command=lambda:os.startfile(self.manager.root))
         m.add_separator();m.add_command(label='停止并退出',command=self.close)
@@ -356,6 +358,19 @@ class App:
     def renew_clicked(self):
         if self.gate.busy:return
         if messagebox.askyesno('更新证书','重新生成本机素材证书并安装当前用户信任，移除旧证书信任。\n仅限素材 CDN；保留旧证书文件备份和所有缓存。运行中的代理会重启。\n继续吗？',parent=self.root):self.run('certificate',lambda:renew_certificate(self.manager))
+    def choose_acgp_cache(self):
+        if self.gate.busy or self.online:
+            messagebox.showinfo('先停止','选择旧缓存前请先停止加速。',parent=self.root);return
+        folder=filedialog.askdirectory(title='选择旧 ACGP 程序、cache、gbf、https 或 assets 目录',parent=self.root)
+        if not folder:return
+        try:
+            cache_root=normalize_acgp_cache_directory(folder)
+            c=self.manager.config();c.setdefault('cache',{})['legacy_directory']=str(cache_root)
+            save(self.manager.root/'config.json',c)
+            self.notice.configure(text=f'旧 ACGP 缓存已接入：{cache_root}',fg=MUTED)
+            messagebox.showinfo('旧缓存已接入','数字版本目录会直接长期命中；其他旧素材仍会先向源站验证。',parent=self.root)
+        except (OSError,ValueError) as error:
+            messagebox.showerror('无法识别旧缓存',str(error),parent=self.root)
     def use_existing(self):
         if self.gate.busy or self.online:
             messagebox.showinfo('先停止','请先停止当前加速再切换配置目录。',parent=self.root);return

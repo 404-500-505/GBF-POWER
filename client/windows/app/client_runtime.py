@@ -25,6 +25,17 @@ def default_config():
         cache=dict(enabled=False,legacy_directory=None,max_bytes=5*1024**3,max_item_bytes=16*1024**2),
         game_channel=dict(enabled=True,socks_port=18125))
 
+def normalize_acgp_cache_directory(folder):
+    """Resolve a user-selected ACGP cache/cache-gbf/https/assets level."""
+    selected=Path(folder).resolve()
+    candidates=[selected,selected/'gbf',selected/'cache/gbf']
+    if selected.name.casefold()=='https':candidates.append(selected.parent)
+    if selected.name.casefold()=='assets' and selected.parent.name.casefold()=='https':
+        candidates.append(selected.parent.parent)
+    for candidate in candidates:
+        if (candidate/'https/assets').is_dir():return candidate.resolve()
+    raise ValueError('所选目录中没有可识别的 ACGP cache/gbf/https/assets 结构。')
+
 def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 

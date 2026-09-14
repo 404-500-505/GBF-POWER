@@ -1,9 +1,10 @@
-"""Conservative public-asset cache. Legacy ACG POWER files are read-only."""
+"""Public GBF asset cache with an ACGP-compatible versioned-asset store."""
 from collections import OrderedDict
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -15,6 +16,10 @@ ASSET_HOSTS = frozenset(
     [f'prd-game-a{n}-gbf.akamaized.net' for n in ['',1,2,3,4,5,6]])
 EXTENSIONS = frozenset(['.png','.jpg','.jpeg','.gif','.webp','.avif','.svg','.ico',
                         '.js','.mjs','.css','.woff','.woff2','.ttf','.otf','.mp3','.ogg','.m4a','.mp4','.webm'])
+VERSIONED_ASSET = re.compile(r'/assets/[0-9]{10}/[A-Za-z0-9_@./+\-]+')
+# A numeric resource version is a content namespace in GBF. Keep it for ten
+# years instead of applying the generic 60-second Last-Modified heuristic.
+VERSIONED_TTL_SECONDS = 10 * 365 * 24 * 60 * 60
 
 
 def header_map(headers):
@@ -56,11 +61,17 @@ def cacheable(status, headers):
             and not mapped.keys() & {'set-cookie','content-range'} and vary <= {'accept-encoding','origin'})
 
 
-def remaining_lifetime(headers, now):
+def versioned_asset(path):
+    return bool(VERSIONED_ASSET.fullmatch(path))
+
+
+def remaining_lifetime(headers, now, path=''):
     mapped = header_map(headers)
     control = directives(mapped.get('cache-control',''))
     if control.keys() & {'no-cache','no-store','private'}:
         return 0
+    if versioned_asset(path):
+        return VERSIONED_TTL_SECONDS
     try:
         age = max(0, int(mapped.get('age','0')))
         date = parsedate_to_datetime(mapped['date']).timestamp() if 'date' in mapped else now
@@ -123,6 +134,8 @@ class AssetCache:
                  *, max_memory_bytes=64*1024**2, max_memory_entries=512):
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
+        self.directory = directory.resolve()
+        self.acgp_dir = self.directory/'gbf'
         self.legacy_dir = Path(legacy_dir).resolve() if legacy_dir else None
         self.max_bytes, self.max_item_bytes = max_bytes, max_item_bytes
         self.lock = threading.RLock()
@@ -153,6 +166,7 @@ class AssetCache:
             return dict(entries=count, bytes=size, max_bytes=self.max_bytes,
                         memory_hits=self.memory_hits, memory_entries=len(self._memory),
                         memory_bytes=self.memory_bytes, max_memory_bytes=self.max_memory_bytes,
+                        acgp_directory=str(self.acgp_dir), acgp_compatible=True,
                         legacy_available=bool(self.legacy_dir and self.legacy_dir.is_dir()))
 
     def _forget_memory(self, key):
@@ -190,7 +204,12 @@ class AssetCache:
                 return self._copy_entry(self._memory[key][0])
             row = self.db.execute('SELECT headers,body,stored,expires FROM assets WHERE key=?',(key,)).fetchone()
             if not row:
-                return None
+                entry = self._read_acgp(self.acgp_dir, host, path, request, versioned_only=True)
+                if entry is None:
+                    return None
+                serialized = json.dumps(entry.headers)
+                self._remember(key, entry, serialized)
+                return self._copy_entry(entry)
             self.db.execute('UPDATE assets SET used=? WHERE key=?',(time.time(),key))
             self.db.commit()
             entry = Entry(json.loads(row[0]),bytes(row[1]),row[2],row[3])
@@ -203,15 +222,18 @@ class AssetCache:
             self._forget_memory(key)
             self.db.execute('DELETE FROM assets WHERE key=?',(key,))
             self.db.commit()
+            if versioned_asset(path):
+                self._remove_acgp(path)
 
     def store(self, host, path, request, status, headers, body):
         if not eligible(host,path,request) or not cacheable(status,headers) or len(body)>min(self.max_bytes,self.max_item_bytes):
             return False
         now = time.time()
+        lifetime = remaining_lifetime(headers,now,path)
         with self.lock:
             self._forget_memory(self.key(host,path,request))
             self.db.execute('INSERT OR REPLACE INTO assets VALUES (?,?,?,?,?,?,?)',
-                (self.key(host,path,request),json.dumps(headers),body,now,now+remaining_lifetime(headers,now),now,len(body)))
+                (self.key(host,path,request),json.dumps(headers),body,now,now+lifetime,now,len(body)))
             size = self.db.execute('SELECT COALESCE(SUM(size),0) FROM assets').fetchone()[0]
             while size > self.max_bytes:
                 key, removed = self.db.execute('SELECT key,size FROM assets ORDER BY used LIMIT 1').fetchone()
@@ -219,29 +241,55 @@ class AssetCache:
                 self.db.execute('DELETE FROM assets WHERE key=?',(key,))
                 size -= removed
             self.db.commit()
+            if versioned_asset(path):
+                if lifetime > 0:
+                    self._write_acgp(path, headers, body, now)
+                else:
+                    self._remove_acgp(path)
         return True
 
     def legacy(self, host, path, request):
         if not self.legacy_dir or not eligible(host,path,request):
             return None
-        target = (self.legacy_dir/'https'/path.lstrip('/')).resolve()
-        if not target.is_relative_to(self.legacy_dir):
+        return self._read_acgp(self.legacy_dir, host, path, request)
+
+    @staticmethod
+    def _accepted_encoding(request, encoding):
+        encoding = (encoding or '').lower()
+        if not encoding or encoding == 'identity':
+            return True
+        encodings = {}
+        try:
+            for item in request.get('accept-encoding','').lower().split(','):
+                name, _, params = item.strip().partition(';')
+                if name:
+                    encodings[name] = float(params.partition('=')[2]) if params else 1
+        except ValueError:
+            return False
+        return encodings.get(encoding,encodings.get('*',0)) > 0
+
+    def _acgp_target(self, root, path):
+        root = Path(root).resolve()
+        target = (root/'https'/path.lstrip('/')).resolve()
+        return target if target.is_relative_to(root) else None
+
+    def _read_acgp(self, root, host, path, request, *, versioned_only=False):
+        if host not in ASSET_HOSTS or (versioned_only and not versioned_asset(path)):
+            return None
+        target = self._acgp_target(root, path)
+        if target is None:
             return None
         try:
             sidecar = Path(str(target)+'.ext').resolve()
-            if not sidecar.is_relative_to(self.legacy_dir) or sidecar.stat().st_size > 8192:
+            root = Path(root).resolve()
+            if not sidecar.is_relative_to(root) or sidecar.stat().st_size > 8192:
                 return None
             if target.stat().st_size > self.max_item_bytes:
                 return None
             meta = json.loads(sidecar.read_text(encoding='utf-8-sig'))
             encoding = (meta.get('ce') or '').lower()
-            if encoding and encoding != 'identity':
-                encodings = {}
-                for item in request.get('accept-encoding','').lower().split(','):
-                    name, _, params = item.strip().partition(';')
-                    encodings[name] = float(params.partition('=')[2]) if params else 1
-                if encodings.get(encoding,encodings.get('*',0)) <= 0:
-                    return None
+            if not self._accepted_encoding(request, encoding):
+                return None
             body = target.read_bytes()
             if hashlib.md5(body).hexdigest() != meta.get('md5'):
                 return None
@@ -252,8 +300,55 @@ class AssetCache:
                     if not isinstance(value,str) or any(ord(c)<32 or ord(c)==127 for c in value):
                         return None
                     headers.append((new,value))
-            if not cacheable(200,headers) or not any(k in meta for k in ('ETag','LastModified')):
+            is_versioned = versioned_asset(path)
+            if not cacheable(200,headers) or (not is_versioned and not any(k in meta for k in ('ETag','LastModified'))):
                 return None
-            return Entry(headers,body,0,0,True)
+            now = time.time()
+            return Entry(headers,body,now,now+VERSIONED_TTL_SECONDS,False) if is_versioned else Entry(headers,body,0,0,True)
         except (OSError,ValueError,TypeError,AttributeError):
             return None
+
+    def _write_acgp(self, path, headers, body, now):
+        target = self._acgp_target(self.acgp_dir, path)
+        if target is None:
+            return False
+        mapped = header_map(headers)
+        metadata = {
+            'LastModified': mapped.get('last-modified'),
+            'ETag': mapped.get('etag'),
+            'at': int(now),
+            'md5': hashlib.md5(body).hexdigest(),
+            'ce': mapped.get('content-encoding'),
+            'ct': mapped.get('content-type',''),
+            'v': 1,
+        }
+        sidecar = Path(str(target)+'.ext')
+        suffix = f'.pending-{os.getpid()}-{threading.get_ident()}'
+        body_pending = Path(str(target)+suffix)
+        meta_pending = Path(str(sidecar)+suffix)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            body_pending.write_bytes(body)
+            meta_pending.write_text(json.dumps(metadata,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+            os.replace(body_pending,target)
+            os.replace(meta_pending,sidecar)
+            return True
+        except OSError:
+            for pending in (body_pending,meta_pending):
+                try:
+                    pending.unlink()
+                except OSError:
+                    pass
+            return False
+
+    def _remove_acgp(self, path):
+        target = self._acgp_target(self.acgp_dir, path)
+        if target is None:
+            return
+        for candidate in (target,Path(str(target)+'.ext')):
+            try:
+                candidate.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass

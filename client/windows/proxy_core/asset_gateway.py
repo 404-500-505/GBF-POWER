@@ -226,6 +226,11 @@ class AssetGateway:
                 return
             if not entry:
                 entry = await asyncio.to_thread(self.cache.legacy,host,path,mapped)
+                if entry and entry.fresh(mapped):
+                    self.stats['hits'] += 1
+                    self.stats['legacy_hits'] += 1
+                    await self.cached(connection,writer,entry,'ACGP-HIT')
+                    return
             self.stats['misses'] += 1
             if entry and entry.legacy:
                 verified = await self.validate_legacy_head(host,path,headers,entry)

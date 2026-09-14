@@ -53,6 +53,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(cfg['routing_profile_version'],2)
         self.assertNotIn('BEGIN',json.dumps(cfg))
         self.assertIsNone(cfg['ssh'])
+
+    def test_acgp_cache_picker_accepts_common_directory_levels(self):
+        root=self.root/'old-acgp/cache/gbf'
+        (root/'https/assets').mkdir(parents=True)
+        for selected in (root.parent.parent,root.parent,root,root/'https',root/'https/assets'):
+            with self.subTest(selected=selected):
+                self.assertEqual(r.normalize_acgp_cache_directory(selected),root.resolve())
+
+    def test_acgp_cache_picker_rejects_unrelated_directory(self):
+        unrelated=self.root/'downloads';unrelated.mkdir()
+        with self.assertRaisesRegex(ValueError,'ACGP'):
+            r.normalize_acgp_cache_directory(unrelated)
     def test_initialize_migrates_legacy_shared_profile_to_battle_priority(self):
         legacy={'port':8123,'game_channel':{'enabled':False,'socks_port':18125}}
         r.save(self.root/'config.json',legacy)
