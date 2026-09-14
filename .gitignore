@@ -1,0 +1,34 @@
+# 运行态与部署状态
+**/runtime/
+**/live-state/
+**/deployment-history-*.json
+**/state.json
+
+# 密钥、主机记录与日志
+**/known_hosts
+**/id_ed25519*
+**/*.key
+**/*.pem
+**/*.log
+
+# Python
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+
+# 构建与发布产物
+**/build/
+**/dist/
+**/release/
+**/.go-cache/
+**/go-cache/
+**/.gradle/
+
+# 编辑器
+**/.idea/
+
+# 二进制与归档
+*.exe
+*.msi
+*.apk
+*.zip

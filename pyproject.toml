@@ -1,0 +1,16 @@
+[tool.gbf_power]
+name = "GBF Power"
+license = "AGPL-3.0-only"
+python-requires = ">=3.11"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
