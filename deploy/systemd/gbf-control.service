@@ -1,0 +1,23 @@
+[Unit]
+Description=GBF Power activation and control service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbf-control
+Group=gbf-control
+UMask=0077
+ExecStart=/usr/local/lib/gbf-power/gbf-activation serve --config /etc/gbf-power/control/config.json
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gbf-power/control
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

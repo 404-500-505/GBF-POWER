@@ -83,22 +83,29 @@ func (c Config) Validate() error {
 func server(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 }
-func serve(configPath string) error {
+func loadConfig(configPath string) (Config, error) {
 	b, e := os.ReadFile(configPath)
 	if e != nil {
-		return errors.New("cannot read config")
+		return Config{}, errors.New("cannot read config")
 	}
 	var c Config
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if d.Decode(&c) != nil {
-		return errors.New("invalid config JSON")
+		return Config{}, errors.New("invalid config JSON")
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
-		return errors.New("invalid config JSON")
+		return Config{}, errors.New("invalid config JSON")
 	}
 	if e = c.Validate(); e != nil {
+		return Config{}, e
+	}
+	return c, nil
+}
+func serve(configPath string) error {
+	c, e := loadConfig(configPath)
+	if e != nil {
 		return e
 	}
 	// Bind before opening the DB: an existing daemon owns its state and socket.
@@ -325,6 +332,18 @@ func adminCommand(socket string, args []string) error {
 	return e
 }
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "check-config" {
+		f := flag.NewFlagSet("check-config", flag.ContinueOnError)
+		config := f.String("config", "", "JSON config file")
+		if e := f.Parse(args[1:]); e != nil {
+			return e
+		}
+		if *config == "" || f.NArg() != 0 {
+			return errors.New("usage: gbf-activation check-config --config FILE")
+		}
+		_, e := loadConfig(*config)
+		return e
+	}
 	if len(args) > 0 && args[0] == "gateway" {
 		f := flag.NewFlagSet("gateway", flag.ContinueOnError)
 		config := f.String("config", "", "JSON gateway config file")
