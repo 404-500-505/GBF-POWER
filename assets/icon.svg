@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">GBF Power neutral icon</title>
+  <desc id="desc">An original geometric G mark without third-party artwork.</desc>
+  <rect width="256" height="256" rx="48" fill="#18201c"/>
+  <circle cx="128" cy="128" r="78" fill="none" stroke="#a5efd4" stroke-width="24"/>
+  <path d="M132 116h72v68h-24v-44h-48z" fill="#a5efd4"/>
+</svg>

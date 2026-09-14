@@ -1,0 +1,31 @@
+{
+  "description": "仅供学习、研究与技术交流。请遵守所在地法律法规和服务条款，禁止未经许可经营 VPN、公共代理、绕过访问控制或从事其他违法活动。构建前复制为 rules.local.json 并复核最小目标白名单。",
+  "domain_suffixes": [
+    "granbluefantasy.jp",
+    "gamewith.jp",
+    "mbga.jp",
+    "mobage.jp",
+    "dmm.com",
+    "dmm.co.jp",
+    "dmmgames.com"
+  ],
+  "exact_hosts": [
+    "prd-game-a-granbluefantasy.akamaized.net",
+    "prd-game-a-gbf.akamaized.net",
+    "code.createjs.com",
+    "code.jquery.com",
+    "cdnjs.cloudflare.com",
+    "cdn.jsdelivr.net",
+    "fonts.fontplus.dev",
+    "www.datadoghq-browser-agent.com"
+  ],
+  "socks5_hosts": [
+    "ws.game.granbluefantasy.jp"
+  ],
+  "exact_host_ports": [
+    {
+      "host": "ws.game.granbluefantasy.jp",
+      "port": 11240
+    }
+  ]
+}

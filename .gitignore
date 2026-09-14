@@ -21,6 +21,7 @@
 **/*.jks
 **/*.keystore
 **/*.log
+**/*.local.json
 
 # Python
 **/__pycache__/
