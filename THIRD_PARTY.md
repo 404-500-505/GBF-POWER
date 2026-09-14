@@ -4,7 +4,8 @@
 
 | 依赖 | 生态 | 精确版本 | 许可证 | 备注 |
 | --- | --- | --- | --- | --- |
-| `golang.org/x/crypto` | Go | 待从锁定文件补充 | 待从对应版本上游材料核对 | 加密相关能力 |
+| `golang.org/x/crypto` | Go | `v0.57.0` | BSD-3-Clause | Go 服务端直接依赖；加密及 SSH 能力 |
+| `golang.org/x/sys` | Go | `v0.48.0` | BSD-3-Clause | Go 服务端间接依赖；平台系统调用 |
 | `cryptography` | Python | 待从锁定文件补充 | 待从对应版本上游材料核对 | 加密相关能力 |
 | `h11` | Python | 待从锁定文件补充 | 待从对应版本上游材料核对 | HTTP/1.1 协议能力 |
 | `PyInstaller` | Python | 待从锁定文件补充 | 待从对应版本上游材料核对 | 桌面应用打包 |

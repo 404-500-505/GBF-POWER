@@ -1,0 +1,12 @@
+{
+  "data_dir": "/var/lib/gbf-power/control",
+  "listen": "0.0.0.0:18444",
+  "tls_cert": "/etc/gbf-power/control/tls.crt",
+  "tls_key": "/etc/gbf-power/control/tls.key",
+  "node": {
+    "host": "192.0.2.10",
+    "port": 2222,
+    "username": "gbfdevice",
+    "host_key": "${PRIMARY_NODE_HOST_PUBLIC_KEY}"
+  }
+}
