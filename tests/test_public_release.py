@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = PROJECT_ROOT / "scripts" / "check_public_release.py"
 WRAPPER = PROJECT_ROOT / "scripts" / "check-public-release.ps1"
 SAFE_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "safe" / "config.json"
+WRAPPER_STARTUP_ERROR = b"public release check failed: startup error\n"
 CHECKER_SPEC = importlib.util.spec_from_file_location("public_release_checker", CHECKER)
 assert CHECKER_SPEC is not None and CHECKER_SPEC.loader is not None
 CHECKER_MODULE = importlib.util.module_from_spec(CHECKER_SPEC)
@@ -588,8 +589,43 @@ class PublicReleaseCheckTests(unittest.TestCase):
         )
 
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
-        self.assertEqual(b"public release check failed: Python unavailable\n", result.stderr)
+        self.assertEqual(WRAPPER_STARTUP_ERROR, result.stderr)
         self.assertNotIn(b"CommandNotFoundException", result.stdout + result.stderr)
+
+    def test_wrapper_sanitizes_missing_checker_on_available_powershell_editions(self) -> None:
+        scripts = self.repo / "scripts"
+        scripts.mkdir()
+        local_wrapper = scripts / WRAPPER.name
+        shutil.copyfile(WRAPPER, local_wrapper)
+        executables = [
+            executable
+            for name in ("pwsh", "powershell.exe")
+            if (executable := shutil.which(name)) is not None
+        ]
+        if not executables:
+            self.skipTest("PowerShell is unavailable")
+
+        for executable in executables:
+            with self.subTest(executable=executable):
+                result = subprocess.run(
+                    [
+                        executable,
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(local_wrapper),
+                    ],
+                    cwd=self.repo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(b"", result.stdout)
+                self.assertEqual(WRAPPER_STARTUP_ERROR, result.stderr)
+                self.assertNotIn(str(self.repo).encode(), result.stdout + result.stderr)
+                self.assertNotIn(b"Resolve-Path", result.stdout + result.stderr)
 
     def test_wrapper_runs_on_available_powershell_editions(self) -> None:
         scripts = self.repo / "scripts"

@@ -1,15 +1,14 @@
 $ErrorActionPreference = 'Stop'
 
-$repositoryRootCandidate = [System.IO.Path]::Combine($PSScriptRoot, '..')
-$checkerCandidate = [System.IO.Path]::Combine($PSScriptRoot, 'check_public_release.py')
-$repositoryRoot = (Resolve-Path -LiteralPath $repositoryRootCandidate).Path
-$checker = (Resolve-Path -LiteralPath $checkerCandidate).Path
-
 try {
+    $repositoryRootCandidate = [System.IO.Path]::Combine($PSScriptRoot, '..')
+    $checkerCandidate = [System.IO.Path]::Combine($PSScriptRoot, 'check_public_release.py')
+    $repositoryRoot = (Resolve-Path -LiteralPath $repositoryRootCandidate).Path
+    $checker = (Resolve-Path -LiteralPath $checkerCandidate).Path
     $pythonCommand = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
 }
 catch {
-    [Console]::Error.Write("public release check failed: Python unavailable`n")
+    [Console]::Error.Write("public release check failed: startup error`n")
     exit 2
 }
 
@@ -18,7 +17,7 @@ try {
     $checkerExitCode = $LASTEXITCODE
 }
 catch {
-    [Console]::Error.Write("public release check failed: Python unavailable`n")
+    [Console]::Error.Write("public release check failed: startup error`n")
     exit 2
 }
 
