@@ -11,6 +11,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = PROJECT_ROOT / "scripts" / "check_public_release.py"
+WRAPPER = PROJECT_ROOT / "scripts" / "check-public-release.ps1"
 SAFE_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "safe" / "config.json"
 
 
@@ -66,6 +67,80 @@ class PublicReleaseCheckTests(unittest.TestCase):
         self.assertEqual("public release check passed\n", result.stdout)
         self.assertEqual("", result.stderr)
 
+    def test_staged_sensitive_blob_is_scanned_after_worktree_is_made_safe(self) -> None:
+        secret = "-----BEGIN " + "RSA PRIVATE KEY-----"
+        candidate = self._write("staged.txt", secret)
+        self._git("add", "--", candidate.name)
+        candidate.write_text("safe worktree replacement", encoding="utf-8")
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "private-key")
+        self.assertNotIn(secret, result.stdout)
+
+    def test_staged_safe_blob_is_used_when_worktree_contains_a_secret(self) -> None:
+        candidate = self._write("staged.txt", "safe staged content")
+        self._git("add", "--", candidate.name)
+        candidate.write_text("-----BEGIN " + "RSA PRIVATE KEY-----", encoding="utf-8")
+
+        result = self._run_checker()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_case_distinct_index_entries_are_both_scanned_when_supported(self) -> None:
+        self._git("config", "core.ignorecase", "false")
+        secret = "-----BEGIN " + "DSA PRIVATE KEY-----"
+        secret_object = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=self.repo,
+            input=secret,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        safe_object = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=self.repo,
+            input="safe",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        self._git("update-index", "--add", "--cacheinfo", f"100644,{secret_object},Case.TXT")
+        self._git("update-index", "--add", "--cacheinfo", f"100644,{safe_object},case.txt")
+        names = self._git("ls-files").stdout.splitlines()
+        if names != ["Case.TXT", "case.txt"]:
+            self.skipTest("Git index does not support case-distinct paths")
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "private-key")
+        self.assertIn("Case.TXT\tprivate-key\t", result.stdout)
+
+    def test_oversized_index_blob_is_rejected_after_worktree_removal(self) -> None:
+        candidate = self._write("large-index.txt", b"x" * (2 * 1024 * 1024 + 1))
+        self._git("add", "--", candidate.name)
+        candidate.unlink()
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "oversized-file")
+
+    def test_symbolic_link_mode_in_index_is_rejected(self) -> None:
+        object_id = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=self.repo,
+            input="target.txt",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        self._git("update-index", "--add", "--cacheinfo", f"120000,{object_id},link.txt")
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "symbolic-link")
+
     def test_private_key_header_is_rejected_without_echoing_secret(self) -> None:
         secrets = [
             "-----BEGIN " + "OPENSSH PRIVATE KEY-----",
@@ -85,6 +160,32 @@ class PublicReleaseCheckTests(unittest.TestCase):
             self.assertIn(f"secret-{index}.txt\tprivate-key\t", result.stdout)
             self.assertNotIn(secret, result.stdout)
 
+    def test_putty_private_key_header_is_rejected(self) -> None:
+        header = "PuTTY-User" + "-Key-File-3: ssh-rsa"
+        self._write("putty.txt", header)
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "putty-private-key")
+        self.assertNotIn(header, result.stdout)
+
+    def test_ssh_ed25519_public_key_is_allowed(self) -> None:
+        public_key = "ssh-" + "ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoOnly deploy@example.com"
+        self._write("public-key.txt", public_key)
+
+        result = self._run_checker()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_url_with_embedded_credentials_is_rejected(self) -> None:
+        url = "https://" + "alice:s3cret@" + "example.com/api"
+        self._write("endpoint.txt", "url=" + url)
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "url-credentials")
+        self.assertNotIn(url, result.stdout)
+
     def test_production_activation_code_is_rejected_without_echoing_it(self) -> None:
         activation_code = "GBF-" + "0123456789abcdef" * 2
         self._write("settings.json", '{"code": "' + activation_code + '"}')
@@ -102,6 +203,23 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
         self._assert_rejected(result, "activation-code")
         self.assertNotIn(activation_code, result.stdout)
+
+    def test_high_confidence_token_prefixes_are_rejected(self) -> None:
+        tokens = [
+            "ghp" + "_" + "A" * 36,
+            "github" + "_pat_" + "B" * 30,
+            "AK" + "IA" + "C" * 16,
+            "xox" + "b-" + "123456789012-123456789012-" + "D" * 24,
+        ]
+        for index, token in enumerate(tokens):
+            self._write(f"token-{index}.txt", token)
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "high-confidence-token")
+        for index, token in enumerate(tokens):
+            self.assertIn(f"token-{index}.txt\thigh-confidence-token\t", result.stdout)
+            self.assertNotIn(token, result.stdout)
 
     def test_globally_routable_ipv4_address_is_rejected(self) -> None:
         address = "8." + "8.8.8"
@@ -124,6 +242,23 @@ class PublicReleaseCheckTests(unittest.TestCase):
             "240.0.0.1",
         ]
         self._write("addresses.txt", "\n".join(addresses))
+
+        result = self._run_checker()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_globally_routable_ipv6_address_is_rejected(self) -> None:
+        address = "2606:4700:4700:" + ":1111"
+        self._write("ipv6.txt", "endpoint=" + address)
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "global-ipv6")
+        self.assertNotIn(address, result.stdout)
+
+    def test_documentation_and_local_ipv6_addresses_are_allowed(self) -> None:
+        addresses = ["2001:db8::1", "::1", "fd00::1", "fe80::1", "::", "100::1", "ff02::1"]
+        self._write("safe-ipv6.txt", "\n".join(addresses))
 
         result = self._run_checker()
 
@@ -167,6 +302,30 @@ class PublicReleaseCheckTests(unittest.TestCase):
         self._assert_rejected(result, "windows-user-path")
         self.assertNotIn(escaped_path, result.stdout)
 
+    def test_forward_slash_windows_and_unix_user_paths_are_rejected(self) -> None:
+        paths = [
+            ("windows.txt", "C:" + "/Users/" + "alice/project", "windows-user-path"),
+            ("macos.txt", "/Users/" + "alice/project", "unix-user-path"),
+            ("linux.txt", "/home/" + "alice/project", "unix-user-path"),
+        ]
+        for filename, user_path, _rule in paths:
+            self._write(filename, user_path)
+
+        result = self._run_checker()
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        for filename, user_path, rule in paths:
+            self.assertIn(f"{filename}\t{rule}\t", result.stdout)
+            self.assertNotIn(user_path, result.stdout)
+
+    def test_explicit_deploy_example_user_paths_are_allowed(self) -> None:
+        paths = ["C:/Users/deploy/project", "/Users/deploy/project", "/home/deploy/project"]
+        self._write("deploy-paths.txt", "\n".join(paths))
+
+        result = self._run_checker()
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_forbidden_directories_are_rejected_when_git_tracks_them(self) -> None:
         directories = [
             "runtime",
@@ -196,6 +355,7 @@ class PublicReleaseCheckTests(unittest.TestCase):
         names = [
             "state.json",
             "known_hosts",
+            "authorized_keys",
             "id_ed25519",
             "id_ed25519.pub",
             "id_rsa_backup",
@@ -298,7 +458,37 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
         self._assert_rejected(result, "symbolic-link")
 
-    def test_symlinked_parent_that_escapes_repo_is_rejected_when_supported(self) -> None:
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
+    def test_fifo_is_rejected_without_being_opened(self) -> None:
+        fifo = self.repo / "pipe"
+        os.mkfifo(fifo)
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "special-file")
+
+    @unittest.skipUnless(os.name == "nt", "Windows junctions are unavailable")
+    def test_windows_junction_is_rejected_when_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as target_directory:
+            target = Path(target_directory)
+            (target / "payload.txt").write_text("safe", encoding="utf-8")
+            junction = self.repo / "junction"
+            created = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+                capture_output=True,
+                check=False,
+            )
+            if created.returncode != 0:
+                self.skipTest("Windows junction creation is unavailable")
+            try:
+                result = self._run_checker()
+            finally:
+                os.rmdir(junction)
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"\t(?:symbolic-link|special-file)\t")
+
+    def test_index_blob_does_not_follow_symlinked_worktree_parent_when_supported(self) -> None:
         tracked = self._write("linked/payload.txt", "safe")
         self._git("add", "--", "linked/payload.txt")
         tracked.unlink()
@@ -314,8 +504,7 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
             result = self._run_checker()
 
-        self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertRegex(result.stdout, r"\t(?:symbolic-link|path-escape)\t")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_uninitialized_directory_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -323,6 +512,16 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
         self.assertIn("\tgit-command-failed\t", result.stdout)
+        self.assertEqual("", result.stderr)
+
+    def test_repo_argument_must_be_exact_git_top_level(self) -> None:
+        subdirectory = self.repo / "nested"
+        subdirectory.mkdir()
+
+        result = self._run_checker(subdirectory)
+
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("\trepository-not-top-level\t", result.stdout)
         self.assertEqual("", result.stderr)
 
     def test_unresolvable_repository_root_fails_closed(self) -> None:
@@ -345,6 +544,46 @@ class PublicReleaseCheckTests(unittest.TestCase):
         self.assertIn("\tgit-unavailable\t", result.stdout)
         self.assertEqual("", result.stderr)
 
+    def test_gbk_console_escapes_emoji_path_without_traceback(self) -> None:
+        filename = "unsafe-\U0001f600.pem"
+        candidate = self._write(filename, "safe")
+        self._git("add", "-f", "--", candidate.name)
+        env = {**os.environ, "PYTHONIOENCODING": "gbk"}
+
+        result = subprocess.run(
+            [sys.executable, str(CHECKER), "--repo", str(self.repo)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=env,
+        )
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn(b"unsafe-\\U0001f600.pem", result.stdout)
+        self.assertNotIn(str(self.repo).encode(), result.stdout + result.stderr)
+        self.assertNotIn(b"Traceback", result.stdout + result.stderr)
+        self.assertEqual(b"", result.stderr)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is unavailable")
+    def test_wrapper_reports_missing_python_without_powershell_traceback(self) -> None:
+        pwsh = shutil.which("pwsh")
+        assert pwsh is not None
+        empty_path = self.repo / "empty-path"
+        empty_path.mkdir()
+        env = {**os.environ, "PATH": str(empty_path)}
+
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(WRAPPER)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=env,
+        )
+
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(b"public release check failed: Python unavailable\n", result.stderr)
+        self.assertNotIn(b"CommandNotFoundException", result.stdout + result.stderr)
+
     def test_git_command_failure_fails_closed(self) -> None:
         (self.repo / ".git" / "index").write_bytes(b"invalid-index")
 
@@ -363,16 +602,41 @@ class PublicReleaseCheckTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-    def test_candidate_that_cannot_be_read_fails_closed(self) -> None:
+    def test_local_release_deny_literal_and_regex_are_applied(self) -> None:
+        marker = "INTERNAL_" + "MARKER_42"
+        self._write(".gitignore", ".release-deny.local\n")
+        self._write(
+            ".release-deny.local",
+            "literal:" + marker + "\n" + r"regex:customer-[0-9]{4}" + "\n",
+        )
+        self._write("literal.txt", marker)
+        self._write("regex.txt", "customer-1234")
+
+        result = self._run_checker()
+
+        self._assert_rejected(result, "local-deny")
+        self.assertIn("literal.txt\tlocal-deny\t", result.stdout)
+        self.assertIn("regex.txt\tlocal-deny\t", result.stdout)
+        self.assertNotIn(marker, result.stdout)
+
+    def test_invalid_local_release_deny_file_fails_closed(self) -> None:
+        self._write(".gitignore", ".release-deny.local\n")
+        self._write(".release-deny.local", "unsupported:value\n")
+
+        result = self._run_checker()
+
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("\tlocal-deny-invalid\t", result.stdout)
+        self.assertEqual("", result.stderr)
+
+    def test_staged_candidate_is_read_from_index_when_worktree_is_missing(self) -> None:
         candidate = self._write("missing.txt", "safe")
         self._git("add", "--", candidate.name)
         candidate.unlink()
 
         result = self._run_checker()
 
-        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
-        self.assertIn("missing.txt\tfile-read-failed\t", result.stdout)
-        self.assertEqual("", result.stderr)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

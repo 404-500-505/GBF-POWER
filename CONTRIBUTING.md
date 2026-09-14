@@ -40,6 +40,17 @@ go test ./...
 
 ## 发布门禁
 
+运行 `pwsh -File scripts/check-public-release.ps1` 会检查 Git 索引中的不可变 blob，以及未忽略、未跟踪的工作树文件。门禁不会尝试猜测所有真实域名，运营者应按自身环境补充本地规则。
+
+可在仓库根创建被忽略的 `.release-deny.local`。每条非空、非注释行必须严格使用以下一种格式：
+
+```text
+literal:example-secret-marker
+regex:internal-[0-9]{4}
+```
+
+`literal:` 后是逐字匹配内容，`regex:` 后是 Python 标准库正则表达式。该文件必须为 UTF-8 普通文件且不超过 2 MiB；无效格式、无效正则或读取失败都会让门禁失败并返回运行错误。不要把 `.release-deny.local` 加入 Git。
+
 发布负责人必须确认：
 
 - 自动化测试、静态检查和适用的构建流程全部通过；

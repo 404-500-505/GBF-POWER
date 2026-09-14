@@ -9,6 +9,7 @@
 .env.*
 !.env.example
 !.env.*.example
+.release-deny.local
 **/known_hosts
 **/id_ed25519*
 **/id_rsa*
