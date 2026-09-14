@@ -12,20 +12,12 @@ catch {
 }
 
 try {
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $pythonCommand.Source
-    $startInfo.UseShellExecute = $false
-    $startInfo.ArgumentList.Add($checker)
-    $startInfo.ArgumentList.Add('--repo')
-    $startInfo.ArgumentList.Add($repositoryRoot)
-    $process = [System.Diagnostics.Process]::Start($startInfo)
-    if ($null -eq $process) {
-        throw 'Python process did not start'
-    }
-    $process.WaitForExit()
-    exit $process.ExitCode
+    & $pythonCommand.Source $checker '--repo' $repositoryRoot
+    $checkerExitCode = $LASTEXITCODE
 }
 catch {
     [Console]::Error.Write("public release check failed: Python unavailable`n")
     exit 2
 }
+
+exit $checkerExitCode

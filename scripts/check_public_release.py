@@ -265,6 +265,15 @@ def git_candidates(repo: Path) -> list[Candidate]:
     return candidates
 
 
+def index_tree_oid(repo: Path) -> str:
+    object_id = decode_git_text(
+        run_git(repo, ["write-tree"], "Git index identity check failed")
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", object_id):
+        raise release_error(".", "git-output-invalid", "Git returned an invalid tree identifier")
+    return object_id
+
+
 def read_index_blob(repo: Path, candidate: Candidate) -> bytes:
     assert candidate.object_id is not None
     try:
@@ -565,6 +574,7 @@ def check_repository(repo: Path) -> list[Finding]:
     findings: list[Finding] = []
     verify_git_top_level(repo)
     deny_rules = load_local_deny_rules(repo)
+    initial_index_tree = index_tree_oid(repo)
     for candidate in git_candidates(repo):
         candidate_path_findings = path_findings(candidate.path, candidate.mode)
         findings.extend(candidate_path_findings)
@@ -579,6 +589,8 @@ def check_repository(repo: Path) -> list[Finding]:
                 continue
             assert raw_content is not None
         findings.extend(content_findings(candidate.path, raw_content, deny_rules))
+    if index_tree_oid(repo) != initial_index_tree:
+        raise release_error(".", "index-changed", "Git index changed during the release check")
     return findings
 
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -13,6 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = PROJECT_ROOT / "scripts" / "check_public_release.py"
 WRAPPER = PROJECT_ROOT / "scripts" / "check-public-release.ps1"
 SAFE_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "safe" / "config.json"
+CHECKER_SPEC = importlib.util.spec_from_file_location("public_release_checker", CHECKER)
+assert CHECKER_SPEC is not None and CHECKER_SPEC.loader is not None
+CHECKER_MODULE = importlib.util.module_from_spec(CHECKER_SPEC)
+sys.modules[CHECKER_SPEC.name] = CHECKER_MODULE
+CHECKER_SPEC.loader.exec_module(CHECKER_MODULE)
 
 
 class PublicReleaseCheckTests(unittest.TestCase):
@@ -584,6 +591,42 @@ class PublicReleaseCheckTests(unittest.TestCase):
         self.assertEqual(b"public release check failed: Python unavailable\n", result.stderr)
         self.assertNotIn(b"CommandNotFoundException", result.stdout + result.stderr)
 
+    def test_wrapper_runs_on_available_powershell_editions(self) -> None:
+        scripts = self.repo / "scripts"
+        scripts.mkdir()
+        local_checker = scripts / CHECKER.name
+        local_wrapper = scripts / WRAPPER.name
+        shutil.copyfile(CHECKER, local_checker)
+        shutil.copyfile(WRAPPER, local_wrapper)
+        self._git("add", "--", "scripts")
+        executables = [
+            executable
+            for name in ("pwsh", "powershell.exe")
+            if (executable := shutil.which(name)) is not None
+        ]
+        if not executables:
+            self.skipTest("PowerShell is unavailable")
+
+        for executable in executables:
+            with self.subTest(executable=executable):
+                result = subprocess.run(
+                    [
+                        executable,
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(local_wrapper),
+                    ],
+                    cwd=self.repo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual([b"public release check passed"], result.stdout.splitlines())
+                self.assertEqual(b"", result.stderr)
+
     def test_git_command_failure_fails_closed(self) -> None:
         (self.repo / ".git" / "index").write_bytes(b"invalid-index")
 
@@ -637,6 +680,22 @@ class PublicReleaseCheckTests(unittest.TestCase):
         result = self._run_checker()
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_missing_untracked_candidate_read_fails_closed(self) -> None:
+        with self.assertRaises(CHECKER_MODULE.ReleaseCheckError) as captured:
+            CHECKER_MODULE.read_worktree_candidate(self.repo, Path("missing-untracked.txt"))
+
+        self.assertEqual("file-read-failed", captured.exception.finding.rule)
+
+    def test_index_tree_change_fails_closed(self) -> None:
+        with mock.patch.object(
+            CHECKER_MODULE, "index_tree_oid", side_effect=["a" * 40, "b" * 40]
+        ):
+            with mock.patch.object(CHECKER_MODULE, "git_candidates", return_value=[]):
+                with self.assertRaises(CHECKER_MODULE.ReleaseCheckError) as captured:
+                    CHECKER_MODULE.check_repository(self.repo)
+
+        self.assertEqual("index-changed", captured.exception.finding.rule)
 
 
 if __name__ == "__main__":
