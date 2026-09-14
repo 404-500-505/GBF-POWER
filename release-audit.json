@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "scope": "source-publication",
+  "audited_at_utc": "2026-09-14T12:02:08Z",
+  "git_head": "3d3143a3af8894296e6e9e2a234472e0c1cb97b9",
+  "results": [
+    {
+      "name": "repository-python-tests",
+      "command": "python -m unittest discover -s tests -p test_*.py -q",
+      "exit_code": 0,
+      "tests": 56,
+      "skipped": 3
+    },
+    {
+      "name": "windows-client-tests",
+      "command": "python -m unittest discover -s client/windows/tests -p test_*.py -q",
+      "exit_code": 0,
+      "tests": 191,
+      "skipped": 0
+    },
+    {
+      "name": "admin-tests",
+      "command": "python -m unittest discover -s admin/tests -p test_*.py -q",
+      "exit_code": 0,
+      "tests": 22,
+      "skipped": 0
+    },
+    {
+      "name": "deployment-contract-tests",
+      "command": "python -m unittest discover -s deploy/tests -p test_*.py -q",
+      "exit_code": 0,
+      "tests": 10,
+      "skipped": 0
+    },
+    {
+      "name": "go-tests",
+      "command": "go test ./...",
+      "exit_code": 0
+    },
+    {
+      "name": "script-and-link-validation",
+      "command": "compileall; bash -n; PowerShell parser; check_links.py",
+      "exit_code": 0
+    }
+  ],
+  "release_gate": {
+    "result": "passed",
+    "scanner_sha256": "e16a94d8caebcf33379159acc351dfa9c64a75eb2d51c116909a69c188999bbe"
+  },
+  "limitations": [
+    "No live infrastructure was contacted or changed during this source audit.",
+    "Windows installers were not built because production bootstrap values are intentionally absent.",
+    "Exact Python dependency versions and redistribution notices remain blockers for binary releases."
+  ],
+  "privacy": "The audit contains no host name, user name, absolute path, credential, device identifier, or network address."
+}
