@@ -1,0 +1,27 @@
+{
+  "binary": "./gbf-activation",
+  "gateway_config_template": "./server/gateway/config.example.json",
+  "gateway_rules": "./server/gateway/rules.example.json",
+  "control_config_template": "./server/control/config.multinode.example.json",
+  "gateway_ssh": {
+    "target": "deploy@gateway.example.com",
+    "port": 22,
+    "identity_file": "./operator_ed25519",
+    "known_hosts": "./known_hosts"
+  },
+  "control_ssh": {
+    "target": "deploy@control.example.com",
+    "port": 22,
+    "identity_file": "./operator_ed25519",
+    "known_hosts": "./known_hosts"
+  },
+  "node": {
+    "id": "osaka",
+    "public_host": "gateway.example.com",
+    "port": 2222,
+    "username": "gbfdevice",
+    "control_url": "https://control.example.com:18444",
+    "control_certificate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "capacity_bps": 50000000
+  }
+}

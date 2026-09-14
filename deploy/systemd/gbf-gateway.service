@@ -1,0 +1,22 @@
+[Unit]
+Description=GBF Power authorized gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbf-gateway
+Group=gbf-gateway
+UMask=0077
+ExecStart=/usr/local/lib/gbf-power/gbf-activation gateway --config /etc/gbf-power/gateway/config.json
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

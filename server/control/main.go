@@ -332,6 +332,18 @@ func adminCommand(socket string, args []string) error {
 	return e
 }
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "check-gateway-config" {
+		f := flag.NewFlagSet("check-gateway-config", flag.ContinueOnError)
+		config := f.String("config", "", "JSON gateway config file")
+		if e := f.Parse(args[1:]); e != nil {
+			return e
+		}
+		if *config == "" || f.NArg() != 0 {
+			return errors.New("usage: gbf-activation check-gateway-config --config FILE")
+		}
+		_, e := readGatewayOnlyConfig(*config)
+		return e
+	}
 	if len(args) > 0 && args[0] == "check-config" {
 		f := flag.NewFlagSet("check-config", flag.ContinueOnError)
 		config := f.String("config", "", "JSON config file")

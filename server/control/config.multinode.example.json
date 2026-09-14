@@ -1,0 +1,29 @@
+{
+  "data_dir": "/var/lib/gbf-power/control",
+  "listen": "0.0.0.0:18444",
+  "tls_cert": "/etc/gbf-power/control/tls.crt",
+  "tls_key": "/etc/gbf-power/control/tls.key",
+  "node": {
+    "host": "primary-gateway.example.com",
+    "port": 2222,
+    "username": "gbfdevice",
+    "host_key": "${PRIMARY_NODE_HOST_PUBLIC_KEY}"
+  },
+  "nodes": {
+    "tokyo": {
+      "host": "primary-gateway.example.com",
+      "port": 2222,
+      "username": "gbfdevice",
+      "host_key": "${PRIMARY_NODE_HOST_PUBLIC_KEY}"
+    },
+    "${GATEWAY_NODE_ID}": {
+      "host": "${GATEWAY_PUBLIC_HOST}",
+      "port": ${GATEWAY_PORT},
+      "username": "${GATEWAY_USERNAME}",
+      "host_key": "${GATEWAY_HOST_PUBLIC_KEY}"
+    }
+  },
+  "node_public_keys": {
+    "${GATEWAY_NODE_ID}": "${GATEWAY_NODE_PUBLIC_KEY}"
+  }
+}

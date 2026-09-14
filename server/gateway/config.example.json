@@ -3,9 +3,9 @@
   "username": "gbfdevice",
   "host_key": "/etc/gbf-power/gateway/ssh_host_ed25519_key",
   "rules": "/etc/gbf-power/gateway/rules.json",
-  "node_id": "tokyo_cn2",
-  "control_url": "https://control.example.com:18444",
-  "control_certificate_sha256": "${CONTROL_CERTIFICATE_SHA256}",
+  "node_id": "${NODE_ID}",
+  "control_url": "${CONTROL_URL}",
+  "control_certificate_sha256": "${CONTROL_CERT_SHA256}",
   "node_private_key": "/etc/gbf-power/gateway/node_ed25519",
-  "capacity_bps": 50000000
+  "capacity_bps": ${CAPACITY_BPS}
 }
