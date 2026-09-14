@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
-$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$checker = Join-Path $PSScriptRoot 'check_public_release.py'
+$repositoryRootCandidate = [System.IO.Path]::Combine($PSScriptRoot, '..')
+$checkerCandidate = [System.IO.Path]::Combine($PSScriptRoot, 'check_public_release.py')
+$repositoryRoot = (Resolve-Path -LiteralPath $repositoryRootCandidate).Path
+$checker = (Resolve-Path -LiteralPath $checkerCandidate).Path
 
 try {
     $pythonCommand = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1

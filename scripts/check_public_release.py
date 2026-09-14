@@ -232,11 +232,11 @@ def verify_git_top_level(repo: Path) -> None:
         )
 
 
-def git_candidates(repo: Path) -> list[Candidate]:
-    index_output = run_git(
+def git_candidates(repo: Path, tree_object_id: str) -> list[Candidate]:
+    tree_output = run_git(
         repo,
-        ["ls-files", "--stage", "-z"],
-        "Git index enumeration failed",
+        ["ls-tree", "-r", "-z", tree_object_id],
+        "Git tree enumeration failed",
     )
     untracked_output = run_git(
         repo,
@@ -245,14 +245,14 @@ def git_candidates(repo: Path) -> list[Candidate]:
     )
 
     candidates: list[Candidate] = []
-    for record in decode_git_text(index_output).split("\0"):
+    for record in decode_git_text(tree_output).split("\0"):
         if not record:
             continue
         try:
             metadata, name = record.split("\t", 1)
-            mode, object_id, _stage_number = metadata.split(" ")
+            mode, _object_type, object_id = metadata.split(" ")
         except ValueError as error:
-            raise release_error(".", "git-output-invalid", "Git returned an invalid index entry") from error
+            raise release_error(".", "git-output-invalid", "Git returned an invalid tree entry") from error
         if not re.fullmatch(r"[0-9a-f]{40,64}", object_id):
             raise release_error(
                 ".", "git-output-invalid", "Git returned an invalid object identifier"
@@ -287,7 +287,8 @@ def read_index_blob(repo: Path, candidate: Candidate) -> bytes:
         raise release_error(candidate.path, "git-unavailable", "Git could not be started") from error
     assert process.stdout is not None
     try:
-        raw_content = process.stdout.read(MAX_FILE_SIZE + 1)
+        with process.stdout:
+            raw_content = process.stdout.read(MAX_FILE_SIZE + 1)
     except OSError as error:
         process.kill()
         process.wait()
@@ -575,7 +576,7 @@ def check_repository(repo: Path) -> list[Finding]:
     verify_git_top_level(repo)
     deny_rules = load_local_deny_rules(repo)
     initial_index_tree = index_tree_oid(repo)
-    for candidate in git_candidates(repo):
+    for candidate in git_candidates(repo, initial_index_tree):
         candidate_path_findings = path_findings(candidate.path, candidate.mode)
         findings.extend(candidate_path_findings)
         if any(item.rule in {"symbolic-link", "special-file"} for item in candidate_path_findings):

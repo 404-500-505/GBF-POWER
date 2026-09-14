@@ -627,6 +627,59 @@ class PublicReleaseCheckTests(unittest.TestCase):
                 self.assertEqual([b"public release check passed"], result.stdout.splitlines())
                 self.assertEqual(b"", result.stderr)
 
+    def test_wrapper_treats_brackets_in_repository_path_literally(self) -> None:
+        repositories = self.repo / "repositories"
+        literal_repo = repositories / "repo[1]"
+        wildcard_sibling = repositories / "repo1"
+        for repository in (literal_repo, wildcard_sibling):
+            (repository / "scripts").mkdir(parents=True)
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=repository,
+                capture_output=True,
+                check=True,
+            )
+        local_checker = literal_repo / "scripts" / CHECKER.name
+        local_wrapper = literal_repo / "scripts" / WRAPPER.name
+        shutil.copyfile(CHECKER, local_checker)
+        shutil.copyfile(WRAPPER, local_wrapper)
+        secret = "-----BEGIN " + "RSA PRIVATE KEY-----"
+        (literal_repo / "secret.txt").write_text(secret, encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "--", "scripts", "secret.txt"],
+            cwd=literal_repo,
+            capture_output=True,
+            check=True,
+        )
+        executables = [
+            executable
+            for name in ("pwsh", "powershell.exe")
+            if (executable := shutil.which(name)) is not None
+        ]
+        if not executables:
+            self.skipTest("PowerShell is unavailable")
+
+        for executable in executables:
+            with self.subTest(executable=executable):
+                result = subprocess.run(
+                    [
+                        executable,
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(local_wrapper),
+                    ],
+                    cwd=literal_repo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                self.assertIn(b"secret.txt\tprivate-key\t", result.stdout)
+                self.assertNotIn(secret.encode(), result.stdout + result.stderr)
+                self.assertEqual(b"", result.stderr)
+
     def test_git_command_failure_fails_closed(self) -> None:
         (self.repo / ".git" / "index").write_bytes(b"invalid-index")
 
@@ -686,6 +739,34 @@ class PublicReleaseCheckTests(unittest.TestCase):
             CHECKER_MODULE.read_worktree_candidate(self.repo, Path("missing-untracked.txt"))
 
         self.assertEqual("file-read-failed", captured.exception.finding.rule)
+
+    def test_initial_tree_is_scanned_during_index_aba_change(self) -> None:
+        secret = "-----BEGIN " + "RSA PRIVATE KEY-----"
+        candidate = self._write("aba.txt", secret)
+        self._git("add", "--", candidate.name)
+        secret_object = self._git("rev-parse", ":aba.txt").stdout.strip()
+        original_git_candidates = CHECKER_MODULE.git_candidates
+
+        def replace_index_then_restore(repo: Path, *arguments: str):
+            candidate.write_text("safe replacement", encoding="utf-8")
+            self._git("add", "--", candidate.name)
+            candidates = original_git_candidates(repo, *arguments)
+            self._git(
+                "update-index",
+                "--cacheinfo",
+                f"100644,{secret_object},{candidate.name}",
+            )
+            return candidates
+
+        with mock.patch.object(
+            CHECKER_MODULE, "git_candidates", side_effect=replace_index_then_restore
+        ):
+            findings = CHECKER_MODULE.check_repository(self.repo)
+
+        self.assertIn(
+            ("aba.txt", "private-key"),
+            [(finding.path, finding.rule) for finding in findings],
+        )
 
     def test_index_tree_change_fails_closed(self) -> None:
         with mock.patch.object(
