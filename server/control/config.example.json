@@ -3,6 +3,9 @@
   "listen": "0.0.0.0:18444",
   "tls_cert": "/etc/gbf-power/control/tls.crt",
   "tls_key": "/etc/gbf-power/control/tls.key",
+  "metering_listen": "0.0.0.0:2222",
+  "metering_host_key": "/etc/gbf-power/control/metering_host_ed25519",
+  "metering_rules": "/etc/gbf-power/control/rules.json",
   "node": {
     "host": "192.0.2.10",
     "port": 2222,

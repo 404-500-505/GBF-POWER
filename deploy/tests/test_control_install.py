@@ -28,6 +28,13 @@ class ControlInstallContractTests(unittest.TestCase):
         self.assertIn('mktemp -d', text)
         self.assertNotRegex(text, r'rm\s+-[^\n]*\bstate\.json\b')
 
+    def test_single_node_gateway_key_is_generated_on_target(self):
+        text = INSTALL.read_text(encoding='utf-8')
+        self.assertIn('--metering-rules', text)
+        self.assertIn('ssh-keygen', text)
+        self.assertIn('${PRIMARY_NODE_HOST_PUBLIC_KEY}', text)
+        self.assertIn('metering_host_ed25519', text)
+
     def test_systemd_runs_as_service_user_and_has_no_tcp_admin_port(self):
         text = SERVICE.read_text(encoding='utf-8')
         self.assertIn('User=gbf-control', text)
