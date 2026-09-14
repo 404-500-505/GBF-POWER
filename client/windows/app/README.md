@@ -5,3 +5,5 @@
 构建前把 `assets/activation.example.json` 复制为被 Git 忽略的 `assets/activation.local.json`，填入自建控制服务地址与证书 SHA-256 摘要；再把 `../proxy_core/rules.example.json` 复制为 `../proxy_core/rules.local.json` 并复核最小目标白名单。
 
 客户端首次激活时在用户配置目录生成设备 Ed25519 私钥。请勿复制或公开该文件；泄露者在凭据被撤销前可以冒充对应设备。
+
+本项目仅供学习、研究与技术交流。请遵守所在地法律法规和相关服务条款；禁止未经许可经营 VPN、公共代理、绕过访问控制或实施其他违法行为。
