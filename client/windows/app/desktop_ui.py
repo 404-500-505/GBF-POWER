@@ -115,7 +115,7 @@ class App:
         self.cert_label.pack(anchor='w',pady=(5,3))
         self.label(self.body,'只解密 GBF 素材 CDN，登录和战斗保持加密透传。',MUTED,wraplength=398).pack(anchor='w')
         self.separator()
-        for name,text in [('requests','素材请求'),('hits','本地缓存命中'),('tunnels','加密连接'),('speed','实时流量'),('ping','线路延迟'),('loss','Ping 未响应率'),('gbf','GBF 公开页响应')]:
+        for name,text in [('requests','素材请求'),('hits','本地缓存复用'),('tunnels','加密连接'),('speed','实时流量'),('ping','线路延迟'),('loss','Ping 未响应率'),('gbf','GBF 公开页响应')]:
             self.metrics[name]=self.row(text,'—')
         self.label(self.body,'当前会话统计。加密连接 ≠ 请求数；Ping 不代表游戏丢包。',MUTED,wraplength=398).pack(anchor='w',pady=(5,8))
         self.toggle=self.button(self.body,'已停止，点击开启',self.toggle_clicked)

@@ -11,7 +11,9 @@ def display_stats(status):
     tunnels=None
     if 'connect_tunnels' in s and 'socks5_tunnels' in s:
         tunnels=s['connect_tunnels']+s['socks5_tunnels']
-    return dict(tunnels=tunnels,asset_requests=c.get('requests'),cache_hits=c.get('hits'),
+    hits=c.get('hits')
+    cache_reuse=None if hits is None else hits+(c.get('revalidated') or 0)
+    return dict(tunnels=tunnels,asset_requests=c.get('requests'),cache_hits=cache_reuse,
                 active=s.get('active_connections'),errors=s.get('errors'),
                 saved_bytes=c.get('saved_bytes'))
 

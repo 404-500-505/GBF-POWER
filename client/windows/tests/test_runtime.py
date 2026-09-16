@@ -61,6 +61,12 @@ class RuntimeTests(unittest.TestCase):
             with self.subTest(selected=selected):
                 self.assertEqual(r.normalize_acgp_cache_directory(selected),root.resolve())
 
+    def test_acgp_cache_picker_trusts_assets_returned_by_native_dialog(self):
+        selected=self.root/'old-acgp/cache/gbf/https/assets'
+        with patch.object(Path,'is_dir',return_value=False):
+            self.assertEqual(r.normalize_acgp_cache_directory(selected),
+                             selected.parent.parent.resolve())
+
     def test_acgp_cache_picker_rejects_unrelated_directory(self):
         unrelated=self.root/'downloads';unrelated.mkdir()
         with self.assertRaisesRegex(ValueError,'ACGP'):

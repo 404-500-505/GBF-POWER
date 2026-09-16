@@ -28,13 +28,15 @@ def default_config():
 def normalize_acgp_cache_directory(folder):
     """Resolve a user-selected ACGP cache/cache-gbf/https/assets level."""
     selected=Path(folder).resolve()
+    if selected.name.casefold()=='assets' and selected.parent.name.casefold()=='https':
+        return selected.parent.parent.resolve()
     candidates=[selected,selected/'gbf',selected/'cache/gbf']
     if selected.name.casefold()=='https':candidates.append(selected.parent)
-    if selected.name.casefold()=='assets' and selected.parent.name.casefold()=='https':
-        candidates.append(selected.parent.parent)
     for candidate in candidates:
         if (candidate/'https/assets').is_dir():return candidate.resolve()
-    raise ValueError('所选目录中没有可识别的 ACGP cache/gbf/https/assets 结构。')
+    checked='；'.join(str(candidate/'https/assets') for candidate in candidates)
+    raise ValueError(f'所选目录中没有可识别的 ACGP cache/gbf/https/assets 结构。\n'
+                     f'实际选择：{selected}\n已检查：{checked}')
 
 def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
