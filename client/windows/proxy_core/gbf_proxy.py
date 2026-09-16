@@ -27,12 +27,32 @@ from game_channel import GAME_HOSTS, game_channel_config, is_battle_target
 
 ROOT = Path(__file__).resolve().parent
 APP = 'gbf-local-proxy'
-VERSION = '0.4.3'
+VERSION = '0.4.4'
 HEADER_LIMIT = 65536
 LOG = logging.getLogger(APP)
 REASONS = {200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found',
            405: 'Method Not Allowed', 408: 'Request Timeout',
            431: 'Request Header Fields Too Large', 502: 'Bad Gateway', 503: 'Service Unavailable'}
+
+
+async def start_tunnels(*tunnels):
+    tasks = [asyncio.create_task(tunnel.start()) for tunnel in tunnels if tunnel]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def close_resources(*resources):
+    active = [resource for resource in resources if resource]
+    results = await asyncio.gather(*(resource.close() for resource in active), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            LOG.error('Resource cleanup failed', exc_info=(type(result), result, result.__traceback__))
 
 
 class HTTPError(Exception):
@@ -495,21 +515,18 @@ async def run(config):
                 await gateway.start()
                 server.asset_gateway = gateway
         await server.start()
-        if tunnel:
-            await tunnel.start()
-        if game_tunnel:
-            await game_tunnel.start()
+        await start_tunnels(tunnel, game_tunnel)
         print(f'GBF Local Proxy v{VERSION}: http://127.0.0.1:{server.port}/', flush=True)
         print('Egress: Japan SSH tunnel.' if tunnel else 'Egress: DIRECT.', flush=True)
         await server.stop_event.wait()
     finally:
         try:
-            for resource in (server, gateway, game_tunnel, tunnel):
-                if resource:
-                    try:
-                        await resource.close()
-                    except Exception:
-                        LOG.exception('Resource cleanup failed')
+            if server:
+                try:
+                    await server.close()
+                except Exception:
+                    LOG.exception('Proxy listener cleanup failed')
+            await close_resources(gateway, game_tunnel, tunnel)
             if cache:
                 cache.close()
         finally:

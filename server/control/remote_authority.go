@@ -31,11 +31,21 @@ type remoteLease struct {
 	expires time.Time
 }
 
+type remoteAuthCall struct {
+	done   chan struct{}
+	device Device
+	ok     bool
+}
+
+const authorizationCacheTTL = 5 * time.Second
+
 type RemoteAuthority struct {
 	mu      sync.Mutex
 	config  RemoteAuthorityConfig
 	client  *http.Client
 	leases  map[string]remoteLease
+	keys    map[string]remoteLease
+	auth    map[string]*remoteAuthCall
 	healthy bool
 	now     func() time.Time
 }
@@ -57,8 +67,8 @@ func NewRemoteAuthority(config RemoteAuthorityConfig) (*RemoteAuthority, error) 
 		}
 		return nil
 	}
-	transport := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second}
-	return &RemoteAuthority{config: config, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}, leases: make(map[string]remoteLease), healthy: true, now: time.Now}, nil
+	transport := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConns: 2, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
+	return &RemoteAuthority{config: config, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}, leases: make(map[string]remoteLease), keys: make(map[string]remoteLease), auth: make(map[string]*remoteAuthCall), healthy: true, now: time.Now}, nil
 }
 
 func (a *RemoteAuthority) signedRequest() (NodeSignedRequest, error) {
@@ -83,7 +93,6 @@ func (a *RemoteAuthority) post(path string, request, response any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connection", "close")
 	result, err := a.client.Do(req)
 	if err != nil {
 		return err
@@ -114,24 +123,52 @@ func (a *RemoteAuthority) AuthenticateKey(publicKey string) (Device, bool) {
 	if _, ok := parsePublicKey(publicKey); !ok {
 		return Device{}, false
 	}
+	now := a.now()
+	a.mu.Lock()
+	if lease, ok := a.keys[publicKey]; ok && now.Before(lease.expires) {
+		a.mu.Unlock()
+		return lease.device, true
+	}
+	if call := a.auth[publicKey]; call != nil {
+		a.mu.Unlock()
+		<-call.done
+		return call.device, call.ok
+	}
+	call := &remoteAuthCall{done: make(chan struct{})}
+	a.auth[publicKey] = call
+	a.mu.Unlock()
+	finish := func(device Device, ok bool, expires time.Time) (Device, bool) {
+		a.mu.Lock()
+		if ok {
+			lease := remoteLease{device: device, expires: expires}
+			a.leases[device.ID] = lease
+			cacheExpires := a.now().Add(authorizationCacheTTL)
+			if expires.Before(cacheExpires) {
+				cacheExpires = expires
+			}
+			a.keys[publicKey] = remoteLease{device: device, expires: cacheExpires}
+			a.healthy = true
+		}
+		call.device, call.ok = device, ok
+		delete(a.auth, publicKey)
+		close(call.done)
+		a.mu.Unlock()
+		return device, ok
+	}
 	signed, err := a.signedRequest()
 	if err != nil {
 		a.setHealthy(false)
-		return Device{}, false
+		return finish(Device{}, false, time.Time{})
 	}
 	request := NodeAuthorizeRequest{NodeSignedRequest: signed, PublicKey: publicKey}
 	a.sign(&request.NodeSignedRequest, request.SigningMessage())
 	var response NodeAuthorization
 	if err = a.post("/internal/v1/authorize", request, &response); err != nil || !validNodeAuthorization(response, a.now()) {
 		a.setHealthy(false)
-		return Device{}, false
+		return finish(Device{}, false, time.Time{})
 	}
 	device := Device{ID: response.DeviceID, LicenseID: response.LicenseID, PublicKey: publicKey}
-	a.mu.Lock()
-	a.leases[device.ID] = remoteLease{device: device, expires: time.Unix(response.LeaseExpiresAt, 0)}
-	a.healthy = true
-	a.mu.Unlock()
-	return device, true
+	return finish(device, true, time.Unix(response.LeaseExpiresAt, 0))
 }
 
 func validNodeAuthorization(response NodeAuthorization, now time.Time) bool {
