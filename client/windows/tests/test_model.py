@@ -15,6 +15,9 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(v['tunnels'],13)
         self.assertEqual(v['asset_requests'],7)
         self.assertEqual(v['cache_hits'],3)
+    def test_cache_reuse_includes_validated_legacy_bytes(self):
+        v=m.display_stats({'cache':{'requests':206,'hits':5,'revalidated':29}})
+        self.assertEqual(v['cache_hits'],34)
     def test_old_engine_does_not_guess_requests(self):
         self.assertIsNone(m.display_stats({'cache':{'hits':5,'misses':8}})['asset_requests'])
     def test_unknown_not_zero(self):

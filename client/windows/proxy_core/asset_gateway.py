@@ -36,7 +36,7 @@ class AssetGateway:
         self.locks = {}
         self.slots = asyncio.Semaphore(16)
         self.stats = dict(hits=0,misses=0,revalidated=0,legacy_hits=0,bypassed=0,
-                          saved_bytes=0,stored=0,errors=0)
+                          saved_bytes=0,stored=0,errors=0,downloads=0)
 
     async def start(self):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -226,6 +226,11 @@ class AssetGateway:
                 return
             if not entry:
                 entry = await asyncio.to_thread(self.cache.legacy,host,path,mapped)
+                if entry and entry.fresh(mapped):
+                    self.stats['hits'] += 1
+                    self.stats['legacy_hits'] += 1
+                    await self.cached(connection,writer,entry,'ACGP-HIT')
+                    return
             self.stats['misses'] += 1
             if entry and entry.legacy:
                 verified = await self.validate_legacy_head(host,path,headers,entry)
@@ -263,12 +268,14 @@ class AssetGateway:
             if use_cache:
                 await asyncio.to_thread(self.cache.invalidate,host,path,mapped)
             store_body = bytearray() if use_cache and cacheable(status,received) else None
+            downloaded = 0
             client_headers = received + [('X-GBF-Cache','MISS' if use_cache else 'BYPASS')]
             writer.write(connection.send(h11.Response(status_code=status,headers=client_headers)))
             await writer.drain()
             while True:
                 chunk = await event(remote,remote_reader)
                 if isinstance(chunk,h11.Data):
+                    downloaded += len(chunk.data)
                     if store_body is not None:
                         if len(store_body)+len(chunk.data) <= self.cache.max_item_bytes:
                             store_body.extend(chunk.data)
@@ -277,6 +284,8 @@ class AssetGateway:
                     writer.write(connection.send(h11.Data(data=chunk.data)))
                     await writer.drain()
                 elif isinstance(chunk,h11.EndOfMessage):
+                    if method == 'GET' and 200 <= status < 300 and downloaded:
+                        self.stats['downloads'] += 1
                     # Never commit partial data. Conservative: responses with trailers aren't cached.
                     if store_body is not None and not chunk.headers:
                         if await asyncio.to_thread(self.cache.store,host,path,mapped,status,received,bytes(store_body)):

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'proxy_core'))
 HOST = 'prd-game-a-granbluefantasy.akamaized.net'
@@ -132,6 +133,73 @@ class CacheTests(unittest.TestCase):
         self.cache.close()
         self.cache = AssetCache(self.root/'new', self.root/'legacy',1000,500)
         self.assertEqual(self.cache.lookup(HOST, PATH, {}).body, b'PNG')
+
+    def test_versioned_asset_is_written_in_acgp_layout_with_sidecar(self):
+        versioned = '/assets/1789040290/js/main.js'
+        headers = [('Content-Type','text/javascript; charset=UTF-8'),
+                   ('Content-Encoding','gzip'),('ETag','"asset-v1"'),
+                   ('Last-Modified','Wed, 10 Sep 2026 12:00:00 GMT')]
+        body = gzip.compress(b'console.log("GBF")')
+        self.assertTrue(self.put(versioned,body,headers,{'accept-encoding':'gzip'}))
+        target = self.root/'new/gbf/https/assets/1789040290/js/main.js'
+        self.assertEqual(target.read_bytes(),body)
+        metadata = json.loads(Path(str(target)+'.ext').read_text(encoding='utf-8'))
+        self.assertEqual(metadata['ETag'],'"asset-v1"')
+        self.assertEqual(metadata['LastModified'],'Wed, 10 Sep 2026 12:00:00 GMT')
+        self.assertEqual(metadata['ce'],'gzip')
+        self.assertEqual(metadata['ct'],'text/javascript; charset=UTF-8')
+        self.assertEqual(metadata['md5'],hashlib.md5(body).hexdigest())
+        self.assertEqual(metadata['v'],1)
+
+    def test_versioned_asset_remains_fresh_long_term_and_survives_missing_index(self):
+        from asset_cache import AssetCache
+        versioned = '/assets/1789040290/img/sp/versioned.png'
+        self.assertTrue(self.put(versioned,b'LONG-LIVED'))
+        entry = self.cache.lookup(HOST,versioned,{})
+        self.assertGreaterEqual(entry.expires_at-entry.stored_at,30*86400)
+        self.cache.db.execute('DELETE FROM assets')
+        self.cache.db.commit()
+        self.cache.close()
+        self.cache = AssetCache(self.root/'new', self.root/'legacy',1000,500)
+        restored = self.cache.lookup(HOST,versioned,{})
+        self.assertEqual(restored.body,b'LONG-LIVED')
+        with patch('asset_cache.time.time',return_value=restored.stored_at+29*86400):
+            self.assertTrue(restored.fresh({}))
+
+    def test_versioned_asset_with_no_cache_is_not_persisted_in_acgp_store(self):
+        versioned = '/assets/1789040290/img/sp/no-cache.png'
+        headers = [('Content-Type','image/png'),('Cache-Control','no-cache')]
+        self.assertTrue(self.put(versioned,b'REVALIDATE',headers))
+        target = self.root/'new/gbf/https/assets/1789040290/img/sp/no-cache.png'
+        self.assertFalse(target.exists())
+
+    def test_invalidating_versioned_asset_removes_acgp_file_and_sidecar(self):
+        versioned = '/assets/1789040290/img/sp/invalidated.png'
+        self.assertTrue(self.put(versioned,b'OLD'))
+        target = self.root/'new/gbf/https/assets/1789040290/img/sp/invalidated.png'
+        self.assertTrue(target.exists())
+        self.cache.invalidate(HOST,versioned,{})
+        self.assertFalse(target.exists())
+        self.assertFalse(Path(str(target)+'.ext').exists())
+        self.assertIsNone(self.cache.lookup(HOST,versioned,{}))
+
+    def test_existing_acgp_version_directory_is_a_fresh_legacy_hit(self):
+        versioned = '/assets/1789040290/img/sp/from-acgp.png'
+        target = self.root/'legacy/https/assets/1789040290/img/sp/from-acgp.png'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'ACGP')
+        Path(str(target)+'.ext').write_text(json.dumps({
+            'md5':hashlib.md5(b'ACGP').hexdigest(),'ce':None,'ct':'image/png',
+            'ETag':'"acgp"','LastModified':'Wed, 10 Sep 2026 12:00:00 GMT','v':1}))
+        entry = self.cache.legacy(HOST,versioned,{})
+        self.assertEqual(entry.body,b'ACGP')
+        self.assertTrue(entry.fresh({}))
+
+    def test_unversioned_asset_keeps_conservative_freshness(self):
+        self.put(headers=[('Content-Type','image/png'),
+                          ('Last-Modified','Wed, 01 Jan 2025 00:00:00 GMT')])
+        entry = self.cache.lookup(HOST,PATH,{})
+        self.assertLessEqual(entry.expires_at-entry.stored_at,60)
 
 
 if __name__ == '__main__':

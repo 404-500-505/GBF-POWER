@@ -130,6 +130,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'x-gbf-cache: hit',second.lower())
         self.assertEqual(len(self.requests),1)
         self.assertEqual(self.gateway.stats['hits'],1)
+        self.assertEqual(self.gateway.stats.get('downloads'),1)
 
     async def test_cookie_query_range_and_api_bypass_cache(self):
         for path,headers in [('/assets/img/a.png','Cookie: private=x\r\n'),
@@ -148,6 +149,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(self.origin_body,second)
         self.assertIn(b'if-none-match: "v1"',self.requests[-1].lower())
         self.assertEqual(self.gateway.stats['revalidated'],1)
+        self.assertEqual(self.gateway.stats.get('downloads'),1)
 
     async def test_404_after_expiry_does_not_return_stale_body(self):
         await self.get()
@@ -212,6 +214,27 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.get(headers='Accept-Encoding: gzip\r\n')
         self.assertEqual(len(self.requests),1)
 
+    async def test_versioned_acgp_javascript_hit_allows_cross_origin_game_load(self):
+        import gzip,hashlib,json
+        path='/assets/1789731895/js/cjs/ab_all_8159.js'
+        legacy=self.path/('legacy/https'+path)
+        legacy.parent.mkdir(parents=True)
+        wire=gzip.compress(b'define(function(){return true})')
+        legacy.write_bytes(wire)
+        Path(str(legacy)+'.ext').write_text(json.dumps({
+            'ct':'text/javascript; charset=UTF-8','ce':'gzip',
+            'md5':hashlib.md5(wire).hexdigest(),'ETag':'"v1"'}))
+        self.cache.legacy_dir=self.path/'legacy'
+
+        response=await self.get(path,headers=(
+            'Accept-Encoding: gzip\r\n'
+            'Origin: https://game.granbluefantasy.jp\r\n'))
+
+        head=response.split(b'\r\n\r\n',1)[0].lower()
+        self.assertIn(b'access-control-allow-origin: *',head)
+        self.assertIn(b'x-gbf-cache: acgp-hit',head)
+        self.assertEqual(self.requests,[])
+
     async def test_legacy_can_validate_with_head_when_origin_ignores_conditional_get(self):
         import hashlib,json
         legacy=self.path/'legacy/https/assets/img/test.png'
@@ -225,6 +248,21 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.requests[0].startswith(b'HEAD '))
         self.assertEqual(len(self.requests),1)
         self.assertEqual(self.gateway.stats['legacy_hits'],1)
+
+    async def test_versioned_acgp_legacy_file_is_served_without_origin_request(self):
+        import hashlib,json
+        path='/assets/1789040290/img/sp/from-acgp.png'
+        legacy=self.path/'legacy/https/assets/1789040290/img/sp/from-acgp.png'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'ACGP-VERSIONED')
+        Path(str(legacy)+'.ext').write_text(json.dumps({'ct':'image/png','ce':None,
+            'md5':hashlib.md5(b'ACGP-VERSIONED').hexdigest(),'ETag':'"old"','v':1}))
+        self.cache.legacy_dir=self.path/'legacy'
+        response=await self.get(path)
+        self.assertTrue(response.endswith(b'ACGP-VERSIONED'))
+        self.assertIn(b'x-gbf-cache: acgp-hit',response.lower())
+        self.assertEqual(self.requests,[])
+        self.assertEqual(self.gateway.stats['hits'],1)
 
     async def test_disconnected_origin_never_serves_stale(self):
         await self.get()

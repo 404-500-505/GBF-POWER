@@ -25,6 +25,19 @@ def default_config():
         cache=dict(enabled=False,legacy_directory=None,max_bytes=5*1024**3,max_item_bytes=16*1024**2),
         game_channel=dict(enabled=True,socks_port=18125))
 
+def normalize_acgp_cache_directory(folder):
+    """Resolve a user-selected ACGP cache/cache-gbf/https/assets level."""
+    selected=Path(folder).resolve()
+    if selected.name.casefold()=='assets' and selected.parent.name.casefold()=='https':
+        return selected.parent.parent.resolve()
+    candidates=[selected,selected/'gbf',selected/'cache/gbf']
+    if selected.name.casefold()=='https':candidates.append(selected.parent)
+    for candidate in candidates:
+        if (candidate/'https/assets').is_dir():return candidate.resolve()
+    checked='；'.join(str(candidate/'https/assets') for candidate in candidates)
+    raise ValueError(f'所选目录中没有可识别的 ACGP cache/gbf/https/assets 结构。\n'
+                     f'实际选择：{selected}\n已检查：{checked}')
+
 def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
@@ -65,6 +78,7 @@ class Manager:
         self.root=Path(root).resolve();self.allow_direct=allow_direct
         self.process=None;self.job=None;self.log=None;self.lock=None
         self.auth_checked_at=0
+        self.progress=''
         self.operation=threading.Lock()
     def config(self):return load(self.root/'config.json')
     def ports(self):
@@ -90,6 +104,7 @@ class Manager:
         self.lock=f
     def start(self):
         with self.operation:
+            self.progress='正在检查本机代理与配置…'
             self.acquire()
             c=self.config();s=self.owned_status()
             if s:
@@ -97,6 +112,7 @@ class Manager:
                     raise RuntimeError('加速通道正在重连，请等待或先停止；未启动重复进程。')
                 return
             if c.get('activation',{}).get('managed'):
+                self.progress='正在确认设备授权与线路…'
                 from activation_client import check_device,apply_registration
                 response=check_device(self.root)
                 apply_registration(self.root,response)
@@ -109,6 +125,7 @@ class Manager:
                     if not (self.root/c['ssh'][field]).is_file():
                         raise RuntimeError('尚未配置 SSH 密钥／服务器公钥，请打开“设置”。')
             self._close_handles()
+            self.progress='正在启动本地代理…'
             self.job=Job()
             self.log=(self.root/'runtime/desktop-engine.log').open('w',encoding='utf-8')
             gate=self.root/'runtime'/('start-'+uuid.uuid4().hex+'.gate')
@@ -124,7 +141,10 @@ class Manager:
                 while time.monotonic()<due:
                     if self.process.poll() is not None:raise RuntimeError('启动失败，详细信息在 runtime/desktop-engine.log。请检查 SSH 授权和证书。')
                     s=self.owned_status()
-                    if acceleration_ready(s):return
+                    if acceleration_ready(s):
+                        self.progress='加速通道已就绪'
+                        return
+                    self.progress='正在建立加速通道…' if not s else '本地代理已就绪，正在等待加速通道…'
                     time.sleep(.12)
                 raise RuntimeError('启动超过 30 秒，已回收本次进程。请检查节点连接和 SSH 授权。')
             except BaseException:
@@ -139,6 +159,7 @@ class Manager:
         if self.log:self.log.close();self.log=None
     def stop(self):
         with self.operation:
+            self.progress='正在断开连接并释放本地端口…'
             s=self.owned_status();state=self.state()
             if not s and self.process is None:
                 # A foreign listener must not prevent closing an idle client.

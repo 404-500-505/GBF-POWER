@@ -12,6 +12,7 @@ import struct
 import subprocess
 
 LOG = logging.getLogger('gbf-local-proxy')
+STOP_TIMEOUT = 1
 
 
 async def open_socks(upstream_port, host, port, timeout=15):
@@ -174,11 +175,19 @@ class SshTunnel:
             except ProcessLookupError:
                 pass
             try:
-                await asyncio.wait_for(process.wait(), 3)
+                await asyncio.wait_for(process.wait(), STOP_TIMEOUT)
             except TimeoutError:
-                process.kill()
-                await process.wait()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(process.wait(), STOP_TIMEOUT)
+                except TimeoutError:
+                    LOG.warning('SSH process did not exit after forced termination')
         if self.stderr_task:
+            if process and process.returncode is None:
+                self.stderr_task.cancel()
             await asyncio.gather(self.stderr_task, return_exceptions=True)
         self.process = None
 
