@@ -27,7 +27,7 @@ from game_channel import GAME_HOSTS, game_channel_config, is_battle_target
 
 ROOT = Path(__file__).resolve().parent
 APP = 'gbf-local-proxy'
-VERSION = '0.4.4'
+VERSION = '0.4.5'
 HEADER_LIMIT = 65536
 LOG = logging.getLogger(APP)
 REASONS = {200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found',

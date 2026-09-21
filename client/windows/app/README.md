@@ -1,5 +1,7 @@
 # Windows 客户端源码
 
+0.5.3 修复旧 ACGP 缓存命中时缺少 CORS 响应头、战斗脚本被浏览器拒绝的问题；0.5.2 收紧默认窗口并修复弹层层级。详见 [0.5.3 修复说明](../../../docs/client-0.5.3.md)、[0.5.2 修复说明](../../../docs/client-0.5.2.md)、[控件更新说明](../../../docs/client-0.5.1.md) 与 [0.5.0 更新说明](../../../docs/client-0.5.0.md)。
+
 公开仓库不会携带线上激活入口、证书摘要、设备私钥或服务器主机记录。
 
 构建前把 `assets/activation.example.json` 复制为被 Git 忽略的 `assets/activation.local.json`，填入自建控制服务地址与证书 SHA-256 摘要；再把 `../proxy_core/rules.example.json` 复制为 `../proxy_core/rules.local.json` 并复核最小目标白名单。

@@ -15,7 +15,8 @@ def display_stats(status):
     cache_reuse=None if hits is None else hits+(c.get('revalidated') or 0)
     return dict(tunnels=tunnels,asset_requests=c.get('requests'),cache_hits=cache_reuse,
                 active=s.get('active_connections'),errors=s.get('errors'),
-                saved_bytes=c.get('saved_bytes'))
+                saved_bytes=c.get('saved_bytes'), direct_hits=hits,
+                validated_hits=c.get('revalidated'), downloads=c.get('downloads'))
 
 class OperationGate:
     def __init__(self):

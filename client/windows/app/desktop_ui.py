@@ -31,6 +31,10 @@ from client_runtime import (Manager,initialize,load,save,cert_status,set_cache,r
 from monitor import ping_node,probe_gbf
 from activation_client import (activate,registration,check_device,ActivationError,
                                set_line_preference,line_preference,set_node_quality,LINE_LABELS)
+from client_theme import PALETTES, THEME_LABELS, resolve_theme, system_theme, apply_roles, titlebar_theme
+from client_view import build as build_client_view
+from client_controls import GlassButton, GlassChoice, GlassMenu
+from client_diagnostics import CertificateSnapshot, probe_nodes, runtime_route, tcp_probe
 
 BG='#1c2420';HEAD='#18201c';FG='#dde2df';MUTED='#969e99';GREEN='#a5efd4';BUTTON='#575b59';LINE='#52665d'
 FONT=('Microsoft YaHei UI',10)
@@ -38,7 +42,7 @@ PREFERENCE_LABELS={'auto':'自动选择','tokyo':'优先东京','tokyo_cn2':'优
 
 def assets():
     p=BASE/'assets'
-    return p if p.exists() else BASE.parent/'proxy_core'
+    return p if p.exists() else BASE.parent/'gbf-local-proxy'
 
 def default_home():return Path(os.environ['LOCALAPPDATA'])/'GBFDesktop'
 
@@ -77,74 +81,91 @@ class App:
         self.node_pings={'tokyo':PingWindow(),'tokyo_cn2':PingWindow(),'osaka':PingWindow()}
         self.network=tk.BooleanVar(value=False);self.cache=tk.BooleanVar(value=False)
         self.top=tk.BooleanVar(value=True);self.metrics={};self.probe_due=0
-        root.title('GBF POWER');root.configure(bg=BG)
-        icon=assets()/'app.ico'
-        if icon.is_file():root.iconbitmap(default=str(icon))
-        header_icon=assets()/'app-header.png'
-        self.header_icon=tk.PhotoImage(file=str(header_icon)) if header_icon.is_file() else None
-        root.geometry('440x760');root.resizable(False,False);root.attributes('-topmost',True)
+        self.theme_choice=self.prefs.get('theme','system')
+        if self.theme_choice not in THEME_LABELS:self.theme_choice='system'
+        self.theme_name=resolve_theme(self.theme_choice,system_theme())
+        self.colors=PALETTES[self.theme_name]
+        self.last_theme_check=0
+        self.ping_route=None;self.cert_refresh=threading.Event()
+        root.title('GBF POWER');root.configure(bg=self.colors['bg'])
+        root._theme_roles={'bg':'bg'}
+        if (assets()/'app.ico').is_file():root.iconbitmap(default=str(assets()/'app.ico'))
+        self.header_icon=tk.PhotoImage(file=str(assets()/'app-header.png')) if (assets()/'app-header.png').is_file() else None
+        root.geometry('540x820');root.resizable(False,False);root.attributes('-topmost',True)
         root.protocol('WM_DELETE_WINDOW',self.close)
         root.option_add('*Font',FONT)
-        header=tk.Frame(root,bg=HEAD,height=60)
-        header.pack(fill='x');header.pack_propagate(False)
-        if self.header_icon:
-            tk.Label(header,image=self.header_icon,bg=HEAD).pack(side='left',padx=(16,0))
-        else:
-            tk.Label(header,text='G',font=('Segoe UI',18,'bold'),width=2,bg=BUTTON,fg=FG).pack(side='left',padx=(16,0))
-        title=tk.Label(header,text='GBF POWER',font=('Segoe UI',22),bg=HEAD,fg=FG)
-        title.pack(side='left',padx=10)
-        menu=self.button(header,'⋮',self.menu,width=3);menu.pack(side='right',padx=12)
-        self.body=tk.Frame(root,bg=BG);self.body.pack(fill='both',expand=True,padx=20,pady=12)
-        line=tk.Frame(self.body,bg=BG);line.pack(fill='x',pady=2)
-        self.label(line,'线路',MUTED,width=12).pack(side='left')
-        self.line_value=tk.StringVar(value=PREFERENCE_LABELS[line_preference(self.manager.root)])
-        style=ttk.Style(root);style.configure('Line.TCombobox',font=FONT,padding=2)
-        self.line_select=ttk.Combobox(line,textvariable=self.line_value,state='readonly',width=17,
-                                      values=('自动选择','优先东京','优先东京 CN2','优先大阪'),style='Line.TCombobox')
-        self.line_select.pack(side='left',fill='x',expand=True)
-        self.line_select.bind('<<ComboboxSelected>>',self.line_changed)
         enrolled=registration(self.manager.root)
-        self.actual_line=self.row('实际线路','未连接')
-        self.authorization=self.row('授权',f"已激活 · {enrolled.get('device_count','—')} / 2 台" if enrolled else '未激活')
-        self.row('加速范围','GBF / GameWith / 梦宝谷 / DMM')
-        self.row('本地入口','本机代理')
-        self.separator()
-        cert_line=tk.Frame(self.body,bg=BG);cert_line.pack(fill='x',pady=(3,0))
-        self.check(cert_line,'自签证书 / 本地素材缓存',self.cache,self.cache_clicked).pack(side='left')
-        self.cert_label=self.label(self.body,'证书状态：未检查',MUTED,wraplength=398)
-        self.cert_label.pack(anchor='w',pady=(5,3))
-        self.label(self.body,'只解密 GBF 素材 CDN，登录和战斗保持加密透传。',MUTED,wraplength=398).pack(anchor='w')
-        self.separator()
-        for name,text in [('requests','素材请求'),('hits','本地缓存复用'),('tunnels','加密连接'),('speed','实时流量'),('ping','线路延迟'),('loss','Ping 未响应率'),('gbf','GBF 公开页响应')]:
-            self.metrics[name]=self.row(text,'—')
-        self.label(self.body,'当前会话统计。加密连接 ≠ 请求数；Ping 不代表游戏丢包。',MUTED,wraplength=398).pack(anchor='w',pady=(5,8))
-        self.toggle=self.button(self.body,'已停止，点击开启',self.toggle_clicked)
-        self.toggle.pack(fill='x',ipady=6,pady=(2,9))
-        self.confirm=self.button(self.body,'确认连接状态',self.confirm_clicked)
-        self.confirm.pack(fill='x',ipady=4,pady=(0,9))
-        bottom=tk.Frame(self.body,bg=BG);bottom.pack(fill='x')
-        self.check(bottom,'网络加速',self.network,self.toggle_clicked).pack(side='left')
-        self.check(bottom,'窗口置顶',self.top,lambda:root.attributes('-topmost',self.top.get())).pack(side='right')
-        self.notice=self.label(self.body,'使用前在 ZeroOmega 选择本机 PAC 情景；停止后切回直连。',MUTED,wraplength=398)
-        self.notice.pack(anchor='w',pady=(7,0))
+        build_client_view(self,enrolled,PREFERENCE_LABELS[line_preference(self.manager.root)])
+        self.apply_theme()
         root.bind('<Map>',self.no_maximize)
-        self.root.after(100,self.drain)
+        self.drain_id=self.root.after(100,self.drain)
+        root.bind('<Destroy>',self.on_destroy,add='+')
         if not preview:
             for target in (self.poll,self.ping_loop,self.gbf_loop,self.authorization_loop):
                 threading.Thread(target=target,daemon=True).start()
             if not admin and not enrolled:self.root.after(300,self.activate_dialog)
-    def label(self,parent,text,color=FG,**kw):return tk.Label(parent,text=text,bg=parent.cget('bg'),fg=color,anchor='w',justify='left',**kw)
-    def button(self,parent,text,command,**kw):
-        return tk.Button(parent,text=text,command=command,bg=BUTTON,fg=FG,activebackground='#686e6a',
-                         activeforeground=FG,relief='flat',bd=0,cursor='hand2',**kw)
+    def label(self,parent,text,color='text',**kw):
+        role={FG:'text',MUTED:'muted',GREEN:'success'}.get(color,color)
+        bg_role=getattr(parent,'_theme_roles',{}).get('bg','card')
+        widget=tk.Label(parent,text=text,bg=parent.cget('bg'),fg=self.colors.get(role,color),anchor='w',justify='left',**kw)
+        widget._theme_roles={'bg':bg_role,'fg':role}
+        return widget
+    def button(self,parent,text,command,primary=False,**kw):
+        return GlassButton(parent,text=text,command=command,primary=primary,palette=self.colors,**kw)
     def check(self,parent,text,variable,command):
-        return tk.Checkbutton(parent,text=text,variable=variable,command=command,bg=BG,fg=FG,
-            selectcolor='#344a40',activebackground=BG,activeforeground=GREEN,highlightthickness=0,bd=0)
-    def row(self,name,value):
-        line=tk.Frame(self.body,bg=BG);line.pack(fill='x',pady=2)
+        return GlassChoice(parent,text=text,variable=variable,command=command,kind='switch',palette=self.colors)
+    def row(self,name,value,parent=None):
+        parent=parent or self.body
+        line=tk.Frame(parent,bg=parent.cget('bg'));line.pack(fill='x',pady=2)
+        line._theme_roles={'bg':getattr(parent,'_theme_roles',{}).get('bg','card')}
         self.label(line,name,MUTED,width=12).pack(side='left')
         v=self.label(line,value);v.pack(side='left',fill='x',expand=True);return v
     def separator(self):tk.Frame(self.body,bg=LINE,height=1).pack(fill='x',pady=10)
+    def set_notice(self,text,role='muted'):
+        self.notice.configure(text=text,fg=self.colors[role])
+        self.notice._theme_roles['fg']=role
+    def entry(self,parent,**kw):
+        roles={'bg':'button','fg':'text','insertbackground':'text'}
+        widget=tk.Entry(parent,relief='flat',**{key:self.colors[value] for key,value in roles.items()},**kw)
+        widget._theme_roles=roles
+        return widget
+    def on_destroy(self,event):
+        if event.widget!=self.root:return
+        self.quit_event.set()
+        for callback in self.root.tk.call('after','info'):
+            self.root.after_cancel(callback)
+    def set_theme(self,choice):
+        if choice not in THEME_LABELS:return
+        self.prefs['theme']=choice
+        save(self.preferences,self.prefs)
+        self.theme_choice=choice;self.theme_value.set(THEME_LABELS[choice])
+        self.apply_theme()
+    def apply_theme(self):
+        popup=getattr(self.root,'_glass_popup',None)
+        if popup:popup.close()
+        self.theme_name=resolve_theme(self.theme_choice,system_theme())
+        self.colors=PALETTES[self.theme_name]
+        apply_roles(self.root,self.colors)
+        style=ttk.Style(self.root);style.theme_use('clam')
+        p=self.colors
+        style.configure('Glass.Vertical.TScrollbar',background=p['button'],troughcolor=p['bg'],
+            arrowcolor=p['muted'],bordercolor=p['bg'],lightcolor=p['bg'],darkcolor=p['bg'],width=12)
+        titlebar_theme(self.root,self.theme_name=='dark')
+    def update_connection_state(self):
+        if self.gate.busy:
+            title={'starting':'正在连接','stopping':'正在停止','certificate':'正在处理证书',
+                   'activating':'正在激活','checking':'正在检查连接'}.get(self.gate.state,'正在处理')
+            hint=(getattr(self.manager,'progress','') if self.gate.state in ('starting','stopping') else '') or '操作在后台进行，界面仍可响应。'
+            role='accent'
+        elif self.connected:
+            title='加速已就绪';hint='普通与已启用的战斗通道已连接。';role='success'
+        elif self.online:
+            title='连接中 / 重连中';hint='本地代理在线，仍在等待加速通道。';role='warning'
+        else:
+            title='已停止';hint='GBF / GameWith / 梦宝谷 / DMM · 仅加速指定范围';role='muted'
+        self.connection_state.configure(text='●  '+title,fg=self.colors[role])
+        self.connection_state._theme_roles['fg']=role
+        self.connection_hint.configure(text=hint)
     def line_changed(self,_=None):
         labels={'自动选择':'auto','优先东京':'tokyo','优先东京 CN2':'tokyo_cn2','优先大阪':'osaka'}
         value=labels[self.line_value.get()]
@@ -154,7 +175,7 @@ class App:
             messagebox.showinfo('先停止','切换线路前请先停止加速。',parent=self.root)
             return
         set_line_preference(self.manager.root,value)
-        self.notice.configure(text='线路偏好已保存，下次启动时生效。',fg=MUTED)
+        self.set_notice('线路偏好已保存，下次启动时生效。')
     def no_maximize(self,_=None):
         if self.root.state()=='zoomed':self.root.state('normal')
         try:
@@ -169,6 +190,7 @@ class App:
         def work():
             try:operation();self.queue.put(('done',None))
             except Exception as e:self.queue.put(('error',str(e)))
+            finally:self.cert_refresh.set()
         threading.Thread(target=work,daemon=True).start()
     def toggle_clicked(self):
         self.network.set(self.online)
@@ -178,10 +200,11 @@ class App:
     def activate_dialog(self):
         if self.gate.busy or self.online:
             messagebox.showinfo('先停止','请先停止加速再激活设备。',parent=self.root);return
-        dialog=tk.Toplevel(self.root);dialog.title('激活设备');dialog.configure(bg=BG)
+        dialog=tk.Toplevel(self.root);dialog.title('激活设备');dialog.configure(bg=self.colors['card'])
+        dialog._theme_roles={'bg':'card'}
         dialog.resizable(False,False);dialog.transient(self.root);dialog.grab_set()
         self.label(dialog,'输入激活码 · 一个码最多绑定 2 台设备',wraplength=380).pack(padx=18,pady=(18,8))
-        entry=tk.Entry(dialog,width=38,bg=BUTTON,fg=FG,insertbackground=FG,relief='flat')
+        entry=self.entry(dialog,width=38)
         entry.pack(padx=18,pady=8);entry.focus_set()
         self.label(dialog,'本机会自动生成独立设备凭据，无需配置密钥。\n重装后遗失凭据，请联系管理员解绑旧设备。',MUTED,wraplength=380).pack(padx=18,pady=8)
         def submit():
@@ -229,10 +252,12 @@ class App:
         if self.preview:self.root.destroy();return
         self.exit_after=True;self.run('stopping',self.manager.stop)
     def poll(self):
+        certificates=CertificateSnapshot(cert_status)
         while not self.quit_event.is_set():
             manager=self.manager
             try:
-                s=manager.owned_status();c=cert_status(manager.root)
+                refresh=self.cert_refresh.is_set();self.cert_refresh.clear()
+                s=manager.owned_status();c=certificates.get(manager.root,time.monotonic(),refresh)
                 self.queue.put(('status',(manager.root,s,c)))
             except Exception:self.queue.put(('status',(manager.root,None,None)))
             self.quit_event.wait(1)
@@ -244,20 +269,18 @@ class App:
                 # Sandbox observations are never presented as the user's route.
                 if nodes and 'sandbox' not in os.environ.get('USERNAME','').lower():
                     sampled=time.time()
-                    for node_id,node in nodes.items():
-                        started=time.monotonic()
-                        try:
-                            with socket.create_connection((node['host'],node['port']),timeout=2):pass
-                            ms=(time.monotonic()-started)*1000
-                        except OSError:ms=None
+                    route=runtime_route(self.current)
+                    results=probe_nodes(nodes)
+                    for node_id,ms in results.items():
                         self.node_pings[node_id].add(ms,sampled)
                         set_node_quality(manager.root,node_id,self.node_pings[node_id].quality(sampled))
-                    assigned=(enrolled.get('assigned_line') or {}).get('id')
-                    ms=self.node_pings.get(assigned,PingWindow()).view(sampled)['latest']
+                    active=next((key for key,node in nodes.items() if route and node.get('host')==route[1]),None)
+                    ms=results.get(active)
                 else:
-                    node=manager.config().get('ssh',{}).get('host')
-                    ms=None if 'sandbox' in os.environ.get('USERNAME','').lower() else ping_node(node)
-                self.queue.put(('ping',(manager.root,ms)))
+                    route=runtime_route(self.current)
+                    node=manager.config().get('ssh') or {}
+                    ms=None if 'sandbox' in os.environ.get('USERNAME','').lower() else tcp_probe(node)
+                self.queue.put(('ping',(manager.root,route,ms)))
             except Exception:pass
             self.quit_event.wait(10)
     def gbf_loop(self):
@@ -267,6 +290,8 @@ class App:
                 ms,status=probe_gbf(manager.config()['port'])
                 self.queue.put(('gbf',(manager.root,ms,status)))
     def drain(self):
+        if getattr(self,'drain_id',None):
+            self.root.after_cancel(self.drain_id);self.drain_id=None
         try:
             while True:
                 kind,value=self.queue.get_nowait()
@@ -274,7 +299,7 @@ class App:
                     self.gate.finish('running' if self.online else 'stopped')
                     self.toggle.configure(state='normal')
                     if kind=='error':
-                        self.exit_after=False;self.notice.configure(text=value,fg='#e2bc9c')
+                        self.exit_after=False;self.set_notice(value,'warning')
                         self.root.after(0,lambda message=value:messagebox.showerror('操作未完成',message,parent=self.root))
                     elif self.exit_after:
                         self.quit_event.set();self.manager.dispose();self.root.destroy();return
@@ -288,12 +313,14 @@ class App:
                     folder,reason=value
                     if folder==self.manager.root:
                         self.authorization.configure(text='授权不可用')
-                        self.notice.configure(text=reason,fg='#e2bc9c')
+                        self.set_notice(reason,'warning')
                         self.revocation_pending=reason
                 elif kind=='status':
                     folder,s,c=value
                     if folder!=self.manager.root:continue
                     self.current=s;self.online=bool(s);self.connected=acceleration_ready(s)
+                    route=runtime_route(s)
+                    if route!=self.ping_route:self.pings=PingWindow();self.ping_route=route
                     enrolled=registration(self.manager.root) or {}
                     self.line_value.set(PREFERENCE_LABELS[line_preference(self.manager.root)])
                     self.actual_line.configure(text=actual_line_label(enrolled,s))
@@ -303,15 +330,16 @@ class App:
                     if c:self.cert_label.configure(text=f"证书：{'已信任' if c['trusted'] else '未信任'}　有效期至 {c['expires'][:10]}")
                     else:self.cert_label.configure(text='证书：未安装 / 不可读取')
                     d=display_stats(s)
-                    for key,source in [('requests','asset_requests'),('hits','cache_hits'),('tunnels','tunnels')]:self.metrics[key].configure(text=number(d[source]))
+                    for key,source in [('requests','asset_requests'),('tunnels','tunnels'),('direct','direct_hits'),('validated','validated_hits')]:self.metrics[key].configure(text=number(d[source]))
+                    self.cache_detail.configure(text=f"网络下载 {number(d['downloads'])} · 节省传输 {byte_size(d['saved_bytes'])}")
                     now=time.monotonic();s=s or {}
                     down=self.down.update(s.get('instance'),s.get('bytes_downloaded'),now)
                     up=self.up.update(s.get('instance'),s.get('bytes_uploaded'),now)
                     self.metrics['speed'].configure(text=f'↓ {speed(down)}　↑ {speed(up)}')
                     if not self.gate.busy:self.toggle.configure(text='加速中，点击停止' if self.connected else '连接中 / 重连中，点击停止' if self.online else '已停止，点击开启')
                 elif kind=='ping':
-                    folder,ms=value
-                    if folder==self.manager.root:self.pings.add(ms,time.time())
+                    folder,route,ms=value
+                    if folder==self.manager.root and route and route==self.ping_route:self.pings.add(ms,time.time())
                 elif kind=='gbf':
                     folder,ms,status=value
                     if folder==self.manager.root:self.metrics['gbf'].configure(text=f'{ms:.0f} ms · HTTP {status}' if ms is not None else '不可测')
@@ -321,14 +349,19 @@ class App:
         if (self.online or owned_alive) and registration(self.manager.root) and time.monotonic()>=self.auth_valid_until:
             self.revocation_pending='已超过 5 分钟无法确认授权，暂停加速；网络恢复后可重新开启。'
         if self.revocation_pending and not self.gate.busy:
-            self.notice.configure(text=self.revocation_pending,fg='#e2bc9c')
+            self.set_notice(self.revocation_pending,'warning')
             self.revocation_pending=None;self.run('stopping',self.manager.stop)
         p=self.pings.view(time.time())
         self.metrics['ping'].configure(text=f"{p['latest']:.0f} ms" if p['latest'] is not None else '—')
         self.metrics['loss'].configure(text=(f"{p['loss']:.1f}%（{p['sent']} 次探测）" if p['loss'] is not None else '不可测 / 尚无有效回包'))
-        self.root.after(100,self.drain)
+        self.update_connection_state()
+        now=time.monotonic()
+        if now-self.last_theme_check>=2:
+            self.last_theme_check=now
+            if self.theme_choice=='system' and system_theme()!=self.theme_name:self.apply_theme()
+        self.drain_id=self.root.after(100,self.drain)
     def build_menu(self):
-        m=tk.Menu(self.root,tearoff=False,bg=BG,fg=FG)
+        m=GlassMenu(self.menu_button,self.colors)
         m.add_command(label='激活设备…',command=self.activate_dialog)
         if self.admin:
             m.add_command(label='节点与配置…',command=self.settings)
@@ -367,14 +400,14 @@ class App:
             cache_root=normalize_acgp_cache_directory(folder)
             c=self.manager.config();c.setdefault('cache',{})['legacy_directory']=str(cache_root)
             save(self.manager.root/'config.json',c)
-            self.notice.configure(text=f'旧 ACGP 缓存已接入：{cache_root}',fg=MUTED)
+            self.set_notice(f'旧 ACGP 缓存已接入：{cache_root}')
             messagebox.showinfo('旧缓存已接入','数字版本目录会直接长期命中；其他旧素材仍会先向源站验证。',parent=self.root)
         except (OSError,ValueError) as error:
             messagebox.showerror('无法识别旧缓存',str(error),parent=self.root)
     def use_existing(self):
         if self.gate.busy or self.online:
             messagebox.showinfo('先停止','请先停止当前加速再切换配置目录。',parent=self.root);return
-        folder=filedialog.askdirectory(title='选择包含 config.json 和 rules.json 的代理配置目录',parent=self.root)
+        folder=filedialog.askdirectory(title='选择包含 config.json 和 rules.json 的 gbf-local-proxy 目录',parent=self.root)
         if not folder:return
         p=Path(folder)
         try:
@@ -383,12 +416,13 @@ class App:
             self.manager.dispose();self.manager=Manager(p);self.pings=PingWindow()
             self.metrics['gbf'].configure(text='—');self.down=Rates();self.up=Rates()
             self.prefs['profile']=str(p);save(self.preferences,self.prefs)
-            self.notice.configure(text='已接入现有配置。已有实例可正常停止；再次开启后由客户端管理。',fg=MUTED)
+            self.set_notice('已接入现有配置。已有实例可正常停止；再次开启后由客户端管理。')
         except (OSError,ValueError):messagebox.showerror('配置无效','目录中需要有效的 config.json 和 rules.json。',parent=self.root)
     def settings(self):
         if self.gate.busy or self.online:
             messagebox.showinfo('先停止','修改节点前请先停止加速。',parent=self.root);return
-        dialog=tk.Toplevel(self.root);dialog.title('节点与配置');dialog.configure(bg=BG);dialog.resizable(False,False)
+        dialog=tk.Toplevel(self.root);dialog.title('节点与配置');dialog.configure(bg=self.colors['card']);dialog.resizable(False,False)
+        dialog._theme_roles={'bg':'card'}
         dialog.transient(self.root);dialog.grab_set()
         c=self.manager.config();ssh=c.get('ssh',{});fields={}
         labels=[('host','服务器',ssh.get('host','')),('username','SSH 用户',ssh.get('username','')),
@@ -396,7 +430,7 @@ class App:
                 ('known_hosts','服务器公钥文件',ssh.get('known_hosts',''))]
         for i,(key,label,value) in enumerate(labels):
             self.label(dialog,label,MUTED).grid(row=i,column=0,padx=12,pady=8,sticky='w')
-            entry=tk.Entry(dialog,width=30,bg=BUTTON,fg=FG,insertbackground=FG,relief='flat')
+            entry=self.entry(dialog,width=30)
             entry.insert(0,value);entry.grid(row=i,column=1,padx=12,pady=8);fields[key]=entry
             if key in ('private_key','known_hosts'):
                 def browse(e=entry):
@@ -419,6 +453,12 @@ class App:
 def speed(value):
     if value is None:return '—'
     return f'{value/1024:.1f} KB/s' if value<1024**2 else f'{value/1024**2:.1f} MB/s'
+
+def byte_size(value):
+    if value is None:return '—'
+    if value<1024:return f'{value:.0f} B'
+    if value<1024**2:return f'{value/1024:.1f} KiB'
+    return f'{value/1024**2:.1f} MiB'
 
 def create_root():
     try:return tk.Tk()

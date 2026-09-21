@@ -1,7 +1,7 @@
 [Setup]
 AppId={{FD1A81D4-54C9-4B31-AD6A-481F5A8D6392}
 AppName=GBF POWER
-AppVersion=0.4.4
+AppVersion=0.5.3
 AppPublisher=GBF Desktop (independent client)
 DefaultDirName={localappdata}\Programs\GBFPower
 DefaultGroupName=GBF POWER
@@ -9,7 +9,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=release
-OutputBaseFilename=GBFPower-Setup-0.4.4-x64
+OutputBaseFilename=GBFPower-Setup-0.5.3-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

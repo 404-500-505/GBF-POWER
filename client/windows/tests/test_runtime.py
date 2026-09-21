@@ -33,6 +33,7 @@ class RuntimeTests(unittest.TestCase):
         for _ in range(2):
             self.manager.start()
             self.assertTrue(self.manager.owned_status())
+            self.assertEqual(getattr(self.manager,'progress',None),'加速通道已就绪')
             pid=self.manager.process.pid
             self.manager.start()
             self.assertEqual(self.manager.process.pid,pid)

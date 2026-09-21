@@ -293,7 +293,11 @@ class AssetCache:
             body = target.read_bytes()
             if hashlib.md5(body).hexdigest() != meta.get('md5'):
                 return None
-            headers = [('Content-Type',meta.get('ct',''))]
+            # ACGP sidecars do not persist CORS headers. These entries are
+            # restricted to public, cookie-free GBF CDN assets, so restore the
+            # wildcard header used by the origin before replaying them.
+            headers = [('Content-Type',meta.get('ct','')),
+                       ('Access-Control-Allow-Origin','*')]
             for old,new in [('ce','Content-Encoding'),('ETag','ETag'),('LastModified','Last-Modified')]:
                 if meta.get(old):
                     value = meta[old]

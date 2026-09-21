@@ -143,8 +143,8 @@ class UiTests(unittest.TestCase):
             finally:root.destroy()
 
     def test_actual_route_identifies_tokyo_cn2_without_exposing_host(self):
-        enrolled={'nodes':{'tokyo_cn2':{'host':'cn2.example.com'}}}
-        status={'tunnel':{'connected':True,'server':'cn2.example.com'}}
+        enrolled={'nodes':{'tokyo_cn2':{'host':'203.0.113.20'}}}
+        status={'tunnel':{'connected':True,'server':'203.0.113.20'}}
         self.assertEqual(actual_line_label(enrolled,status),'日本・东京 CN2')
     def test_background_authorization_does_not_relabel_running_route(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,7 +159,7 @@ class UiTests(unittest.TestCase):
                 app.drain()
                 self.assertEqual(app.actual_line.cget('text'),'日本・东京')
             finally:root.destroy()
-    def test_fixed_original_style_and_no_fake_features(self):
+    def test_fixed_glass_layout_and_no_fake_features(self):
         self.assertIsNotNone(App,'原生窗口尚未实现')
         import tkinter as tk
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,12 +168,12 @@ class UiTests(unittest.TestCase):
                 app=App(root,Path(tmp),preview=True)
                 root.update()
                 self.assertEqual(root.resizable(),(0,0))
-                self.assertEqual(root.cget('bg'),'#1c2420')
+                self.assertEqual(root.cget('bg'),app.colors['bg'])
                 self.assertIn('停止',app.toggle.cget('text'))
                 self.assertEqual(app.network.get(),False)
                 self.assertEqual(app.cache.get(),False)
                 self.assertFalse(app.gate.busy)
-                self.assertLessEqual(app.notice.winfo_y()+app.notice.winfo_height(),app.body.winfo_height(),'底部说明不应被裁切')
+                self.assertLessEqual(app.notice.winfo_y()+app.notice.winfo_height(),app.footer.winfo_height(),'底部说明不应被裁切')
                 self.assertEqual(app.notice.winfo_height(),app.notice.winfo_reqheight(),'底部说明必须完整显示')
             finally:root.destroy()
 
